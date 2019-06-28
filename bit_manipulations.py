@@ -166,61 +166,69 @@ def max_uniform_split(N: int,
     return group
 
 
-def num_to_bit_array(num: int,
-                     bit_length: int = 4) -> List[int]:
-    '''
-    Converts a base 10 number into its corresponding bit array representation.
-
-    @param num: input number.
-    @param bit_length: max number of bits used to represent 'num'.
-
-    @returns bit_array: array of bits representing 'num'.
-    '''
-    bit_array: List[int] = [0] * bit_length
-    i = bit_length - 1
-    while (i > 0):
-        t = num >> i
-        bit_array[bit_length - (i + 1)] = 1 if t & 1 else 0
-        i -= 1
-    return bit_array
-
-
 def nums_to_bits(nums: str,
-                 delim: str,
                  bit_length: int,
-                 size: int,
-                 num_length: int = None):
+                 max_num: int,
+                 delim: str = None,
+                 num_length: int = None) -> List[int]:
     '''
     Converts a given number or sequence of numbers into N bit_length integers,
     where N = ceil(len(nums) / bit_length).
 
-    The process wherewith the conversion is done is simple: if a
-    number is located within nums, set that numbers' bit
-    (located at [floor(num/bit_length)[num % bit_length - 1])
+    The process wherewith the conversion takes place is simple: if a
+    number is located within 'nums', set that numbers' bit
+    (located at [N - floor(num/bit_length) + 1][num % bit_length])
     to 1, else 0.
 
     @param nums: string of numbers deliminated by either 'delim' or 'num_length'
-    @param delim: delimiter used for 'nums'
+    @param max_num: maximum number availed for use within 'nums'
     @param bit_length: the interval therewith the integers are sized.
-    @param num_length: if no delimiter is provided, split 'nums' every 'num_length' times.
+    @param delim: delimiter used for 'nums'
+    @param num_length: if no delimiter is provided, split 'nums' at every 'num_length' interval.
 
-    @returns bits: array of bitflags masquerading as integers.
-
-    @raises TypeError: if 'nums' is not a string.
+    @returns bits: array of bit flags masquerading as integers.
     '''
-    if (delim is not None):
-        arr = nums.split(delim)
-    elif (num_length is not None):
-        arr = textwrap.wrap(nums, num_length)
-    N = math.ceil(size / bit_length)
+    arr = nums.split(delim)\
+        if delim is not None\
+        else textwrap.wrap(nums, num_length or -1)
+
+    N = math.ceil(max_num / bit_length)
     bits = [0] * N
 
     for i in arr:
         n = int(i)
-        ix = N - (n // bit_length + 1)
-        t = (n % bit_length) - 1
-        bits[ix] |= 1 << (n % bit_length) - 1
+        ix = n // bit_length
+        bits[ix] |= 1 << (n % bit_length)
     return bits
+
+
+def bits_to_nums(bits: List[int],
+                 bit_length: int,
+                 delim: str = None,
+                 num_length: int = None) -> str:
+    '''
+    Converts an array of integers (therein an array of bit flags), into a
+    sequence of numbers deliminated by 'delim' or separated by 'num_length'.
+
+    The function simply bit shifts each number therein 'bits' by 1 until a subsequent AND
+    with 1 results in a non-zero value.
+
+    @param bits: array of bit flags masquerading as integers.
+    @param delim: delimiter used for 'nums'
+    @param bit_length: the interval therewith the integers are sized.
+    @param num_length: if no delimiter is provided, split 'nums' at every 'num_length' interval.
+
+    @param return: string of numbers deliminated by either 'delim' or 'num_length'
+    '''
+    nums = ""
+    for n, i in enumerate(bits):
+        num = n * bit_length
+        while (i != 0):
+            if (i & 1 != 0):
+                nums += f"{num}" if delim is None else f"{num}{delim}"
+            num += 1
+            i >>= 1
+    return nums if delim is None else nums[:-len(delim)]
 
 
 def popcount64d(num: int):
@@ -239,12 +247,12 @@ def popcount64d(num: int):
     return i
 
 
-def example4():
-    spots = "200,1,2,3,4,5,6,7,8,9,10,11,12,80"
+def example1():
+    spots = "1,2,3,4,5,6,7,8,9,10,11,12,80,60,63"
     drawings = "1,2,3,4,12,13,14,15,20,30,40,50,60,70,80"
 
-    b1 = nums_to_bits(spots, ",", 64, 200)
-    b2 = nums_to_bits(drawings, ",", 64, 200)
+    b1 = nums_to_bits(spots, ",", 64, 80)
+    b2 = nums_to_bits(drawings, ",", 64, 80)
     t = list(map(lambda x: x[0] & x[1], zip(b1, b2)))
     print(b1)
     print(b2)
@@ -259,6 +267,7 @@ def example4():
     print(len(bs1))
     print(len(bs2))
     print(len(bs3))
+    print(bits_to_nums(b1, ", ", 64))
 
 
 def test_splitting():
@@ -273,19 +282,4 @@ def test_splitting():
             assert(j == M)
 
 
-# N = 537
-# limit = 13
-# g = max_uniform_split(N, limit, 2, {})
-# print(g)
-
-# spots = "1,2,3,4,5,6,7,8,9,10,11,12"
-# ia = ltb(spots, ",", 64)
-# print(ia)
-# # s = "".join(map(str, ia))
-# print("{:b}".format(ia[0]).rjust(80, "0"))
-
-
 # example1()
-# example2()
-# example3()
-example4()
