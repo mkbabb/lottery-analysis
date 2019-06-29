@@ -207,20 +207,16 @@ def nums_to_bits_small(nums: str,
                        max_num: int,
                        delim: str = None,
                        num_length: int = None) -> List[int]:
-    arr = nums.split(delim) if delim else textwrap.wrap(nums, num_length or -1)
     bits = [0] * math.ceil(max_num / bit_length)
-
     def f(x: int): bits[x // bit_length] |= 1 << (x % bit_length)
-    list(map(lambda x: f(int(x)), arr))
+    list(map(lambda x: f(int(x)), nums.split(delim) if delim else textwrap.wrap(nums, num_length or -1)))
     return bits
 
 
 def bits_to_nums_small(bits: List[int],
                        bit_length: int,
-                       delim: str = None,
-                       num_length: int = None) -> str:
+                       delim: str = None) -> str:
     nums_l: List[str] = []
-
     def f(num, i):
         while (i != 0):
             nums_l.append(str(num)) if (i & 1 != 0) else 0
