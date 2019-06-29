@@ -202,6 +202,34 @@ def nums_to_bits(nums: str,
     return bits
 
 
+def nums_to_bits_small(nums: str,
+                       bit_length: int,
+                       max_num: int,
+                       delim: str = None,
+                       num_length: int = None) -> List[int]:
+    arr = nums.split(delim) if delim else textwrap.wrap(nums, num_length or -1)
+    bits = [0] * math.ceil(max_num / bit_length)
+
+    def f(x: int): bits[x // bit_length] |= 1 << (x % bit_length)
+    list(map(lambda x: f(int(x)), arr))
+    return bits
+
+
+def bits_to_nums_small(bits: List[int],
+                       bit_length: int,
+                       delim: str = None,
+                       num_length: int = None) -> str:
+    nums_l: List[str] = []
+
+    def f(num, i):
+        while (i != 0):
+            nums_l.append(str(num)) if (i & 1 != 0) else 0
+            num += 1
+            i >>= 1
+    list(map(lambda x: f(x[0] * bit_length, x[1]), enumerate(bits)))
+    return "".join(nums_l) if delim is None else f"{delim}".join(nums_l)
+
+
 def bits_to_nums(bits: List[int],
                  bit_length: int,
                  delim: str = None,
@@ -251,8 +279,8 @@ def example1():
     spots = "1,2,3,4,5,6,7,8,9,10,11,12,80,60,63"
     drawings = "1,2,3,4,12,13,14,15,20,30,40,50,60,70,80"
 
-    b1 = nums_to_bits(spots, ",", 64, 80)
-    b2 = nums_to_bits(drawings, ",", 64, 80)
+    b1 = nums_to_bits_small(spots, 64, 80, ",")
+    b2 = nums_to_bits_small(drawings, 64, 80, ",")
     t = list(map(lambda x: x[0] & x[1], zip(b1, b2)))
     print(b1)
     print(b2)
@@ -267,7 +295,7 @@ def example1():
     print(len(bs1))
     print(len(bs2))
     print(len(bs3))
-    print(bits_to_nums(b1, ", ", 64))
+    print(bits_to_nums_small(b1, 64, ","))
 
 
 def test_splitting():
@@ -282,4 +310,4 @@ def test_splitting():
             assert(j == M)
 
 
-# example1()
+example1()
