@@ -13,5 +13,4 @@ WITH
         FROM drawings
             INNER JOIN toast ON toast.draw_number_id = drawings.id
     )
-SELECT *
-FROM waffle
+	select * from waffle

@@ -285,6 +285,12 @@ def example1():
     bs2 = "|".join(["{:b}".format(i) for i in b2])
     bs3 = "|".join(["{:b}".format(i) for i in t])
 
+    t1 = sum(map(popcount64d, b1))
+    t2 = sum(map(popcount64d, b2))
+    t3 = sum(map(popcount64d, t))
+
+    print(t1, t2, t3)
+
     print(bs1)
     print(bs2)
     print(bs3)
@@ -306,4 +312,4 @@ def test_splitting():
             assert(j == M)
 
 
-example1()
+# example1()

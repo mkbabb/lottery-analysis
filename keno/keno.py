@@ -162,12 +162,12 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
     shape = [249, 1]
     strides = [5 * 60, 24 * 60 * 60]
 
+    # Initialize the starting date to be at 5:05 AM on the day thence.
     start_time = (totimestamp(
         datetime.datetime.strptime(
             drawings.loc[0, "date"], "%m/%d/%Y")) - 24 * 60 * 60) + 5 * 60 * (60 + 1)
-
+    # Start the accumulation at the 228th interval of 5 on the hereinbefore mentioned day.
     offset = 228 * 60 * 5
-
     times = [start_time] * 10002
     times[0] += offset
     accumulate_by(times, shape, strides, [offset, 0])
@@ -203,7 +203,7 @@ def process_numbers_wagered(tickets: pd.DataFrame) -> pd.DataFrame:
 
     ratio = numbers_wagered["number_string"].shape[0] / \
         tickets["numbers_wagered"].shape[0]
-    print(ratio)
+    print(f"savings ratio: {ratio}")
 
     bits = numbers_wagered["number_string"]\
         .apply(lambda x: nums_to_bits(x,
@@ -243,7 +243,7 @@ def calculate_prize(x: list,
                     drawings: pd.DataFrame) -> List[int]:
     '''
     Function applied to all rows in the 'tickets' DataFrame.
-    Utilized normally via a pd.apply method.
+    Utilized normally via pd.apply.
 
     Principally, this function is responsible for the bit-wise AND'ing of
     two lottery numbers, allowing for fast matching of theretofore
@@ -272,14 +272,13 @@ def calculate_prize(x: list,
         match_mask = list(map(lambda x: x[0] & x[1],
                               zip([low_bits1, high_bits1],
                                   [low_bits2, high_bits2])))
+        number_matched = sum(
+            map(lambda x: popcount64d(x), match_mask))
         try:
-            number_matched = sum(
-                map(lambda x: popcount64d(x), match_mask))
-
             prize = PRIZE_DICT[number_played][number_matched]
             match_mask += [number_matched, prize, date]
         except KeyError:
-            match_mask += [0, 0, date]
+            match_mask += [number_matched, 0, date]
     except KeyError:
         match_mask = [0, 0, 0, 0, 0]
 
@@ -319,19 +318,19 @@ def find_winnings(tickets: pd.DataFrame,
     return tickets
 
 
-conn = sqlite3.connect(os.path.join(DIR_PATH, "keno.db"))
-
-
-drawings = pd.read_csv(os.path.join(DIR_PATH, "Keno_Draw_Results.csv"))
+conn = sqlite3.connect(os.path.join(
+    DIR_PATH,
+    "keno.db"))
+drawings = pd.read_csv(os.path.join(
+    DIR_PATH,
+    "Keno_Draw_Results.csv"))
 tickets = pd.read_csv(os.path.join(
-    DIR_PATH, "Keno_Transactions.txt"),
+    DIR_PATH,
+    "Keno_Transactions.txt"),
     sep=";")
 
 
-# times = t_drawings.pivot_table(index=["date"], aggfunc="size")
-# print(times)
-
-t_tickets = process_tickets(tickets[:50000])
+t_tickets = process_tickets(tickets)
 t_drawings = process_drawings(drawings)
 t_numbers_wagered = process_numbers_wagered(t_tickets)
 
@@ -359,6 +358,8 @@ t_tickets.to_sql(name="tickets",
                  if_exists="replace",
                  index_label="id")
 
+
+# 'ix_i' table generation
 
 # N = math.ceil(MAX_NUMBERS / MAX_BITS)
 # ixs: List[List[List[int]]] = [[] for i in range(N)]
