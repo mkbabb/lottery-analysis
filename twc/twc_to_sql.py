@@ -4,7 +4,7 @@ import sqlite3
 conn = sqlite3.connect("twc.db")
 
 
-def xl_to_df(file):
+def xlsx_to_df(file):
     xl = pd.ExcelFile(file)
     return pd.concat([pd.read_excel(xl, i) for i in xl.sheet_names], 0)
 
