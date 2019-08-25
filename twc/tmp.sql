@@ -11,22 +11,22 @@ WITH
     AS
     (
         SELECT
-            NC18_tmt046collabpln AS answerColumn,
+            NC18_tmt046collabpln AS answerColumn_0,
             count(*) AS answerCount,
             *
         FROM
             toast
-        GROUP BY answerColumn, MasterSiteID
+        GROUP BY answerColumn_0, MasterSiteID
     ),
     crepe
     AS
     (
         SELECT
-            (CASE WHEN answerColumn = 1 THEN answerCount ELSE 0 END) AS __NONE,
-            (CASE WHEN answerColumn = 2 THEN answerCount ELSE 0 END) AS _LESS_THAN_OR_EQUAL_TO_1_HOUR,
-            (CASE WHEN answerColumn = 3 THEN answerCount ELSE 0 END) AS _MORE_THAN_1_HOUR_BUT_LESS_THAN_OR_EQUAL_TO_3_HOURS,
-            (CASE WHEN answerColumn = 4 THEN answerCount ELSE 0 END) AS _MORE_THAN_3_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_5_HOURS,
-            (CASE WHEN answerColumn = 5 THEN answerCount ELSE 0 END) AS _MORE_THAN_5_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_10_HOURS,
+            (CASE WHEN answerColumn_0 = 1 THEN answerCount ELSE 0 END) AS _NC18_tmt046collabpln__None,
+            (CASE WHEN answerColumn_0 = 2 THEN answerCount ELSE 0 END) AS _NC18_tmt046collabpln_Less_than_or_equal_to_1_hour,
+            (CASE WHEN answerColumn_0 = 3 THEN answerCount ELSE 0 END) AS _NC18_tmt046collabpln_More_than_1_hour_but_less_than_or_equal_to_3_hours,
+            (CASE WHEN answerColumn_0 = 4 THEN answerCount ELSE 0 END) AS _NC18_tmt046collabpln_More_than_3_hours_but_less_than_or_equal_to_5_hours,
+            (CASE WHEN answerColumn_0 = 5 THEN answerCount ELSE 0 END) AS _NC18_tmt046collabpln_More_than_5_hours_but_less_than_or_equal_to_10_hours,
             *
         FROM
             pancake
@@ -37,12 +37,12 @@ WITH
         SELECT
             MasterSiteID,
             orgName,
-            max(__NONE) AS _NONE,
-            max(_LESS_THAN_OR_EQUAL_TO_1_HOUR) AS LESS_THAN_OR_EQUAL_TO_1_HOUR,
-            max(_MORE_THAN_1_HOUR_BUT_LESS_THAN_OR_EQUAL_TO_3_HOURS) AS MORE_THAN_1_HOUR_BUT_LESS_THAN_OR_EQUAL_TO_3_HOURS,
-            max(_MORE_THAN_3_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_5_HOURS) AS MORE_THAN_3_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_5_HOURS,
-            max(_MORE_THAN_5_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_10_HOURS) AS MORE_THAN_5_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_10_HOURS,
-            (max(__NONE)+max(_LESS_THAN_OR_EQUAL_TO_1_HOUR)+max(_MORE_THAN_1_HOUR_BUT_LESS_THAN_OR_EQUAL_TO_3_HOURS)+max(_MORE_THAN_3_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_5_HOURS)+max(_MORE_THAN_5_HOURS_BUT_LESS_THAN_OR_EQUAL_TO_10_HOURS)) AS _total
+            max(_NC18_tmt046collabpln__None) AS NC18_tmt046collabpln__None,
+            max(_NC18_tmt046collabpln_Less_than_or_equal_to_1_hour) AS NC18_tmt046collabpln_Less_than_or_equal_to_1_hour,
+            max(_NC18_tmt046collabpln_More_than_1_hour_but_less_than_or_equal_to_3_hours) AS NC18_tmt046collabpln_More_than_1_hour_but_less_than_or_equal_to_3_hours,
+            max(_NC18_tmt046collabpln_More_than_3_hours_but_less_than_or_equal_to_5_hours) AS NC18_tmt046collabpln_More_than_3_hours_but_less_than_or_equal_to_5_hours,
+            max(_NC18_tmt046collabpln_More_than_5_hours_but_less_than_or_equal_to_10_hours) AS NC18_tmt046collabpln_More_than_5_hours_but_less_than_or_equal_to_10_hours,
+            ((max(_NC18_tmt046collabpln__None)+max(_NC18_tmt046collabpln_Less_than_or_equal_to_1_hour)+max(_NC18_tmt046collabpln_More_than_1_hour_but_less_than_or_equal_to_3_hours)+max(_NC18_tmt046collabpln_More_than_3_hours_but_less_than_or_equal_to_5_hours)+max(_NC18_tmt046collabpln_More_than_5_hours_but_less_than_or_equal_to_10_hours)))AS op_NC18_tmt046collabpln
         FROM
             crepe
         GROUP BY MasterSiteID
