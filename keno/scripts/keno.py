@@ -357,20 +357,3 @@ t_tickets.to_sql(name="tickets",
                  schema=TICKETS_SCHEMA,
                  if_exists="replace",
                  index_label="id")
-
-
-# 'ix_i' table generation
-
-# N = math.ceil(MAX_NUMBERS / MAX_BITS)
-# ixs: List[List[List[int]]] = [[] for i in range(N)]
-
-# for i in range(MAX_NUMBERS):
-#     ix = i // MAX_BITS
-#     ixs[ix].append([i, 1 << (i % MAX_BITS)])
-
-# for n, j in enumerate(ixs):
-#     t_ix = pd.DataFrame(j, columns=["id", "number"])
-#     t_ix.to_sql(name=f"ix_{n}",
-#                 con=conn,
-#                 if_exists="replace",
-#                 index=False)
