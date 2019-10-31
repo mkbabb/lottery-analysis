@@ -42,6 +42,7 @@ CREATE TABLE "tickets" (
 	"id"	INTEGER PRIMARY KEY AUTOINCREMENT,
     "date" INTEGER,
 	"draw_number_id"	INTEGER,
+    "begin_draw"  INTEGER,
     "end_draw"  INTEGER,
     "qp"    UNSIGNED INTEGER,
     "ticket_cost" INTEGER,
@@ -121,11 +122,6 @@ def process_tickets(tickets: pd.DataFrame) -> pd.DataFrame:
     @returns tickets: modified tickets DataFrame.
     '''
 
-    # Need to modify this at some point.
-    tickets = tickets\
-        .rename(columns={"begin_draw": "draw_number_id",
-                         "NUMBER_WAGERED": "numbers_wagered"})
-
     def bool_coalesce(b: str) -> int:
         b = b.lower().strip()
         if (b == "t" or b == "true"):
@@ -133,7 +129,30 @@ def process_tickets(tickets: pd.DataFrame) -> pd.DataFrame:
         else:
             return 1
 
-    tickets["qp"] = tickets["qp"].apply(bool_coalesce, 1)
+    dfs: List[pd.DataFrame] = []
+
+    def expand_draw_number(df: pd.Series) -> None:
+        begin_draw = df["begin_draw"]
+        end_draw = df["end_draw"]
+
+        delta = end_draw - begin_draw + 1
+
+        df["qp"] = bool_coalesce(df["qp"])
+        df["ticket_cost"] //= delta
+
+        tmp = []
+
+        for i in range(begin_draw, end_draw + 1):
+            t_df = df.copy()
+            t_df["draw_number_id"] = i
+            tmp.append(t_df)
+
+        dfs.append(pd.DataFrame(tmp).reset_index(drop=True))
+
+    tickets.apply(
+        expand_draw_number, axis=1)
+
+    tickets = pd.concat(dfs, axis=0, ignore_index=True)
 
     return tickets
 
@@ -150,27 +169,31 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
 
     @returns drawings: modified 'drawings' DataFrame.
     '''
-    bits = drawings["Winning Number String"].apply(
-        lambda x: nums_to_bits(x,
-                               bit_length=MAX_BITS,
-                               max_num=MAX_NUMBERS,
-                               delim=" "),
-        1)
-
-    drawings["low_bits"] = bits.apply(
-        lambda x: x[0], 1)
-    drawings["high_bits"] = bits.apply(
-        lambda x: x[1], 1)
 
     drawings = drawings\
         .rename(columns={"Draw Nbr": "id",
                          "Draw Date": "date",
                          "Winning Number String": "numbers_winning"})
 
-    drawings["numbers_winning"] = bits.apply(
-        lambda x: bits_to_nums(x,
-                               delim=",",
-                               bit_length=MAX_BITS))
+    def to_bits(df: pd.Series) -> pd.Series:
+        l = nums_to_bits(df["numbers_winning"],
+                         bit_length=MAX_BITS,
+                         max_num=MAX_NUMBERS,
+                         num_length=2,
+                         delim=" ")
+
+        df["numbers_winning"] = bits_to_nums(l,
+                                             delim=",",
+                                             bit_length=MAX_BITS)
+
+        d = pd.Series(dict(zip(["low_bits", "high_bits"], l)))
+        df = df.append(d)
+
+        return df
+
+    drawings = drawings\
+        .apply(to_bits, axis=1, result_type="expand")
+
     # The below will need to be modified to accommodate the new v2 formatting.
     # shape = [249, 1]
     # strides = [5 * 60, 24 * 60 * 60]
@@ -218,42 +241,44 @@ def process_numbers_wagered(tickets: pd.DataFrame) -> pd.DataFrame:
     ratio = numbers_wagered["number_string"].shape[0] / \
         tickets["numbers_wagered"].shape[0]
 
-    bits = numbers_wagered["number_string"]\
-        .apply(lambda x: nums_to_bits(x,
-                                      bit_length=MAX_BITS,
-                                      max_num=MAX_NUMBERS,
-                                      num_length=2),
-               1)
+    def to_bits(df: pd.Series) -> pd.Series:
+        l = nums_to_bits(df["number_string"],
+                         bit_length=MAX_BITS,
+                         max_num=MAX_NUMBERS,
+                         num_length=2)
 
-    numbers_wagered.loc[:, "low_bits"] = bits.apply(
-        lambda x: x[0],
-        1)
-    numbers_wagered.loc[:, "high_bits"] = bits.apply(
-        lambda x: x[1],
-        1)
-    numbers_wagered.loc[:, "numbers_played"] = bits.apply(
-        lambda x: sum(map(lambda y: popcount64d(y), x)))
+        # df["number_string"] = bits_to_nums(l,
+        #                                    delim=",",
+        #                                    bit_length=MAX_BITS)
+        l.append(sum(map(popcount64d, l)))
+
+        d = pd.Series(dict(zip(["low_bits",
+                                "high_bits",
+                                "numbers_played"], l)))
+        df = df.append(d)
+
+        return df
+
+    numbers_wagered = numbers_wagered\
+        .apply(to_bits,
+               axis=1, result_type="expand")
 
     numbers_wagered_dict = dict(zip(
         numbers_wagered["number_string"],
         numbers_wagered.index,)
     )
+
     tickets["numbers_wagered"] = tickets["numbers_wagered"]\
         .map(numbers_wagered_dict.get)
     tickets.rename(
         columns={"numbers_wagered": "numbers_wagered_id"}, inplace=True)
 
-    numbers_wagered.loc[:, "number_string"] = bits.apply(
-        lambda x: bits_to_nums(x,
-                               delim=",",
-                               bit_length=MAX_BITS))
-
     return numbers_wagered
 
 
-def calculate_prize(x: list,
+def calculate_prize(df: pd.Series,
                     numbers_wagered: pd.DataFrame,
-                    drawings: pd.DataFrame) -> List[int]:
+                    drawings: pd.DataFrame) -> pd.Series:
     '''
     Function applied to all rows in the 'tickets' DataFrame.
     Utilized normally via pd.apply.
@@ -270,32 +295,55 @@ def calculate_prize(x: list,
                          hamming weight (number of spots played),
                          and date.
     '''
-    number_wagered_id = x[0]
-    draw_number_id = x[1]
+
+    number_wagered_id = df["numbers_wagered_id"]
+    draw_number_id = df["draw_number_id"]
 
     high_bits1 = numbers_wagered.loc[number_wagered_id, "high_bits"]
     low_bits1 = numbers_wagered.loc[number_wagered_id, "low_bits"]
     number_played = numbers_wagered.loc[number_wagered_id, "numbers_played"]
 
     try:
+
         high_bits2 = drawings.loc[draw_number_id, "high_bits"]
         low_bits2 = drawings.loc[draw_number_id, "low_bits"]
+
         date = drawings.loc[draw_number_id, "date"]
 
         match_mask = list(map(lambda x: x[0] & x[1],
                               zip([low_bits1, high_bits1],
                                   [low_bits2, high_bits2])))
-        number_matched = sum(
+        numbers_matched = sum(
             map(lambda x: popcount64d(x), match_mask))
+
+        # print(numbers_wagered.loc[number_wagered_id, "number_string"])
+        # print(drawings.loc[draw_number_id, "numbers_winning"])
+        # print(numbers_matched)
+
         try:
-            prize = PRIZE_DICT[number_played][number_matched]
-            match_mask += [number_matched, prize, date]
+            prize = PRIZE_DICT[number_played][numbers_matched]
+            match_mask += [numbers_matched, prize, date]
+
         except KeyError:
-            match_mask += [number_matched, 0, date]
+            match_mask += [numbers_matched, 0, date]
+
     except KeyError:
         match_mask = [0, 0, 0, 0, 0]
 
-    return match_mask
+    d = pd.Series(dict(zip(["high_match_mask",
+                            "low_match_mask",
+                            "numbers_matched",
+                            "prize",
+                            "date"], match_mask)))
+
+    df = df.append(d)
+
+    # if (df["prize"] > 0):
+    #     print(df)
+    #     print(drawings.loc[draw_number_id, "numbers_winning"])
+    #     print(numbers_wagered.loc[number_wagered_id, "number_string"])
+
+    return df
 
 
 def find_winnings(tickets: pd.DataFrame,
@@ -314,19 +362,8 @@ def find_winnings(tickets: pd.DataFrame,
     @returns tickets: modified 'tickets' DataFrame.
 
     '''
-    match_mask = tickets[["numbers_wagered_id", "draw_number_id"]]\
-        .apply(lambda x: calculate_prize(x, numbers_wagered, drawings), 1)
-
-    tickets.loc[:, "high_match_mask"] = match_mask.apply(
-        lambda x: x[0], 1)
-    tickets.loc[:, "low_match_mask"] = match_mask.apply(
-        lambda x: x[1], 1)
-    tickets.loc[:, "numbers_matched"] = match_mask.apply(
-        lambda x: x[2], 1)
-    tickets.loc[:, "prize"] = match_mask.apply(
-        lambda x: x[3], 1)
-    tickets.loc[:, "date"] = match_mask.apply(
-        lambda x: x[4], 1)
+    tickets = tickets\
+        .apply(lambda x: calculate_prize(x, numbers_wagered, drawings), axis=1, result_type="expand")
 
     return tickets
 
@@ -342,10 +379,13 @@ tickets = pd.read_csv(
     sep=";")
 
 
-t_tickets = process_tickets(tickets)
-t_drawings = process_drawings(drawings)
-t_numbers_wagered = process_numbers_wagered(t_tickets)
+# t_drawings = process_drawings(drawings[:5])
+# t_tickets = process_tickets(tickets[4984246:4984260])
+# t_numbers_wagered = process_numbers_wagered(t_tickets)
 
+t_drawings = process_drawings(drawings)
+t_tickets = process_tickets(tickets)
+t_numbers_wagered = process_numbers_wagered(t_tickets)
 
 t_tickets = find_winnings(t_tickets, t_numbers_wagered, t_drawings)
 
