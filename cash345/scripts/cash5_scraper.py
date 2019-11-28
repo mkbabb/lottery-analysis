@@ -9,6 +9,8 @@ from utils import dollar_to_float
 START_DATE = datetime.datetime.strptime("10/27/2006", "%m/%d/%Y")
 END_DATE = datetime.datetime.now()
 
+TOTAL_DAYS = (END_DATE - START_DATE).days
+
 
 PATHS = {"prize_5": '//*[@id="ctl00_MainContent_lblCash5Match5Prize"]',
          "prize_4": '//*[@id="ctl00_MainContent_lblCash5Match4Prize"]',
@@ -34,8 +36,6 @@ data = {"prize_5": [],
         "winners_2": [],
         "jackpot": []}
 
-
-TOTAL_DAYS = (END_DATE - START_DATE).days
 
 for n, date in enumerate((START_DATE + datetime.timedelta(i)
                           for i in range(TOTAL_DAYS))):

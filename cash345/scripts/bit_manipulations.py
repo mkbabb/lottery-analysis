@@ -7,14 +7,6 @@ import pandas as pd
 import string
 
 
-# 64-bit OS, max integer size should be 2^63 - 1,
-# so MAX_BITS is then: 64 - 1 = 63. However, each interval of bits is
-# segmented at MAX_BITS + 1, therefore: 63 - 1 = 62.
-# Of course, this is Python, so this is entirely arbitrary.
-
-MAX_BITS = 62
-
-
 '''
 For all things bit and integer array related.
 Facilitates easy bitwise operation on arbitrarily sized bit arrays.
