@@ -5,6 +5,7 @@ import sqlite3
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
 import pandas as pd
+import numpy as np
 
 from bit_manipulations import bits_to_nums, nums_to_bits, popcount64d
 
@@ -31,7 +32,7 @@ CREATE TABLE "drawings" (
 	"date"	INTEGER,
 	"high_bits"	UNSIGNED SMALL INTEGER NOT NULL,
 	"low_bits"	UNSIGNED INTEGER NOT NULL,
-	"numbers_winning"	TEXT,
+	"number_string"	TEXT,
 	PRIMARY KEY("id")
 );
 '''
@@ -131,28 +132,49 @@ def process_tickets(tickets: pd.DataFrame) -> pd.DataFrame:
 
     dfs: List[pd.DataFrame] = []
 
-    def expand_draw_number(df: pd.Series) -> None:
-        begin_draw = df["begin_draw"]
-        end_draw = df["end_draw"]
+    def func(x):
+        begin_draw = x[0]
+        end_draw = x[1]
 
         delta = end_draw - begin_draw + 1
 
-        df["qp"] = bool_coalesce(df["qp"])
-        df["ticket_cost"] //= delta
+        x[2] = bool_coalesce(x[2])
+        x[3] //= delta
 
-        tmp = []
+        
 
-        for i in range(begin_draw, end_draw + 1):
-            t_df = df.copy()
-            t_df["draw_number_id"] = i
-            tmp.append(t_df)
+        if (delta > 1):
+            x = x.reshape((1, -1))
+            x = x.repeat(delta, axis=0)
+            t = (x[..., 0] + np.arange(delta)).reshape((-1, 1))
+            x = np.append(x, t, axis=1)
+        return x
 
-        dfs.append(pd.DataFrame(tmp).reset_index(drop=True))
+    tmp = np.apply_along_axis(func, -1, tickets.values)
+    print(tmp)
 
-    tickets.apply(
-        expand_draw_number, axis=1)
+    # def expand_draw_number(df: pd.Series) -> None:
+    #     begin_draw = df["begin_draw"]
+    #     end_draw = df["end_draw"]
 
-    tickets = pd.concat(dfs, axis=0, ignore_index=True)
+    #     delta = end_draw - begin_draw + 1
+
+    #     df["qp"] = bool_coalesce(df["qp"])
+    #     df["ticket_cost"] //= delta
+
+    #     tmp = []
+
+    #     for i in range(begin_draw, end_draw + 1):
+    #         t_df = df.copy()
+    #         t_df["draw_number_id"] = i
+    #         tmp.append(t_df)
+
+    #     dfs.append(pd.DataFrame(tmp).reset_index(drop=True))
+
+    # tickets.apply(
+    #     expand_draw_number, axis=1)
+
+    # tickets = pd.concat(dfs, axis=0, ignore_index=True)
 
     return tickets
 
@@ -173,18 +195,18 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
     drawings = drawings\
         .rename(columns={"Draw Nbr": "id",
                          "Draw Date": "date",
-                         "Winning Number String": "numbers_winning"})
+                         "Winning Number String": "number_string"})
 
     def to_bits(df: pd.Series) -> pd.Series:
-        l = nums_to_bits(df["numbers_winning"],
+        l = nums_to_bits(df["number_string"],
                          bit_length=MAX_BITS,
                          max_num=MAX_NUMBERS,
                          num_length=2,
                          delim=" ")
 
-        df["numbers_winning"] = bits_to_nums(l,
-                                             delim=",",
-                                             bit_length=MAX_BITS)
+        df["number_string"] = bits_to_nums(l,
+                                           delim=",",
+                                           bit_length=MAX_BITS)
 
         d = pd.Series(dict(zip(["low_bits", "high_bits"], l)))
         df = df.append(d)
@@ -317,7 +339,7 @@ def calculate_prize(df: pd.Series,
             map(lambda x: popcount64d(x), match_mask))
 
         # print(numbers_wagered.loc[number_wagered_id, "number_string"])
-        # print(drawings.loc[draw_number_id, "numbers_winning"])
+        # print(drawings.loc[draw_number_id, "number_string"])
         # print(numbers_matched)
 
         try:
@@ -340,7 +362,7 @@ def calculate_prize(df: pd.Series,
 
     # if (df["prize"] > 0):
     #     print(df)
-    #     print(drawings.loc[draw_number_id, "numbers_winning"])
+    #     print(drawings.loc[draw_number_id, "number_string"])
     #     print(numbers_wagered.loc[number_wagered_id, "number_string"])
 
     return df
@@ -383,29 +405,33 @@ tickets = pd.read_csv(
 # t_tickets = process_tickets(tickets[4984246:4984260])
 # t_numbers_wagered = process_numbers_wagered(t_tickets)
 
-t_drawings = process_drawings(drawings)
-t_tickets = process_tickets(tickets)
-t_numbers_wagered = process_numbers_wagered(t_tickets)
+# t_drawings = process_drawings(drawings)
+t_tickets = process_tickets(tickets[:50])
+t_tickets.to_csv(
+    "keno/data/keno_2017_2019/keno_wager_data_expanded.csv",
+    sep=";",
+    index=False)
+# t_numbers_wagered = process_numbers_wagered(t_tickets)
 
-t_tickets = find_winnings(t_tickets, t_numbers_wagered, t_drawings)
+# t_tickets = find_winnings(t_tickets, t_numbers_wagered, t_drawings)
 
 # print(t_tickets)
 # print(t_drawings)
 # print(t_numbers_wagered)
 
 
-t_drawings.to_sql(name="drawings",
-                  con=conn,
-                  schema=DRAWINGS_SCHEMA,
-                  if_exists="replace",
-                  index_label="id")
-t_numbers_wagered.to_sql(name="numbers_wagered",
-                         con=conn,
-                         schema=NUMBERS_WAGERED_SCHEMA,
-                         if_exists="replace",
-                         index_label="id")
-t_tickets.to_sql(name="tickets",
-                 con=conn,
-                 schema=TICKETS_SCHEMA,
-                 if_exists="replace",
-                 index_label="id")
+# t_drawings.to_sql(name="drawings",
+#                   con=conn,
+#                   schema=DRAWINGS_SCHEMA,
+#                   if_exists="replace",
+#                   index_label="id")
+# t_numbers_wagered.to_sql(name="numbers_wagered",
+#                          con=conn,
+#                          schema=NUMBERS_WAGERED_SCHEMA,
+#                          if_exists="replace",
+#                          index_label="id")
+# t_tickets.to_sql(name="tickets",
+#                  con=conn,
+#                  schema=TICKETS_SCHEMA,
+#                  if_exists="replace",
+#                  index_label="id")
