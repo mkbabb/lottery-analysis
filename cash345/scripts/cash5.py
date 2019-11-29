@@ -11,6 +11,7 @@ from bit_manipulations import nums_to_bits, bits_to_nums, popcount64d
 
 CASH5_FIELD_COUNT = 43
 CASH5_PICKED_COUNT = 5
+CASH5_PRIZE = 100000.0
 MAX_BITS = 63
 
 ODDS_DICT = {CASH5_PICKED_COUNT - i:
@@ -18,6 +19,7 @@ ODDS_DICT = {CASH5_PICKED_COUNT - i:
              choose(CASH5_FIELD_COUNT - CASH5_PICKED_COUNT, i)
              / choose(CASH5_FIELD_COUNT, CASH5_PICKED_COUNT)
              for i in range(CASH5_PICKED_COUNT)}
+
 
 PRIZE_DICT = {5: 100000, 4: 250, 3: 5, 2: 1, 1: 0}
 
@@ -48,38 +50,77 @@ def process_cash5(cash5_df: pd.DataFrame) -> pd.DataFrame:
     return cash5_df
 
 
-def back_test(nums: str, cash5_df: pd.DataFrame):
+def back_test(nums: str,
+              cash5_df: pd.DataFrame,
+              date: str = "") -> pd.DataFrame:
     bits = nums_to_bits(nums=nums,
                         bit_length=MAX_BITS,
                         max_num=CASH5_FIELD_COUNT + 1,
                         delim=", ")[0]
+    if (date != ""):
+        _date = datetime.datetime.strptime(date, "%m/%d/%Y")
+        epoch = int(_date.strftime("%s"))
+        pos = (cash5_df["epoch"] == epoch).argmax()
+        print(pos)
+    else:
+        pos = 0
 
     winnings = []
 
-    def _back_test(x: pd.Series):
+    def propagate_win(n: int, cash5_df: pd.DataFrame) -> float:
+        propagated = True
+        prize = CASH5_PRIZE
+
+        n0 = n
+
+        while (cash5_df.loc[n, "prize_5"] == "Rollover"):
+            prize += CASH5_PRIZE / 10
+            n += 1
+
+        cash5_df.loc[n0, "prize_5"] = prize
+        cash5_df.loc[n, "prize_5"] = CASH5_PRIZE
+
+        return prize
+
+    for n, x in cash5_df.iloc[pos:, ].iterrows():
         match = x["bits"] & bits
+
         if (match):
             count = popcount64d(match)
+            prize = 0.0
+
+            if (count == CASH5_PICKED_COUNT):
+                print("g")
+                if (x["prize_5"] == "Rollover"):
+                    prize = propagate_win(n, cash5_df)
+                else:
+                    prize = float(x["prize_5"]) * x["winners_5"]
+                    x["winners_5"] += 1
+                    prize /= x["winners_5"]
+            else:
+                prize = PRIZE_DICT[count]
 
             x = x.append(
-                pd.Series({"count": count, "prize": PRIZE_DICT[count]}))
+                pd.Series({"count": count, "prize": prize}))
 
             winnings.append(x)
 
-    cash5_df["bits"] = cash5_df.apply(_back_test, 1)
+    winnings_df = pd.DataFrame(winnings)
+    # print(cash5_df.iloc[pos:, ])
+    # print(winnings_df)
+    return winnings_df
 
-    return pd.DataFrame(winnings)
 
+cash5_path = "cash345/data/cash5_winnings.csv"
 
-cash5_path = "cash345/data/NCELCash5_bits.csv"
-
-cash5_df = pd.read_csv(cash5_path, dtype={
-                       f"Number {i}": int for i in range(1, CASH5_PICKED_COUNT + 1)})
+cash5_df = pd.read_csv(cash5_path)
 
 # Be sure to process the original csv into a usable format.
 # cash5_df = process_cash5(cash5_df)
 # cash5_df.to_csv("cash345/data/NCELCash5_bits.csv", index=False)
 
 nums = "1, 2, 3, 4, 5"
+date = "10/08/2007"
 
-winnings = back_test(nums, cash5_df)
+winnings = back_test(nums, cash5_df, date)
+winnings.to_csv("cash345/data/tmp.csv")
