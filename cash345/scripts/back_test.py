@@ -14,14 +14,14 @@ CASH5_PICKED_COUNT = 5
 CASH5_PRIZE = 100000.0
 MAX_BITS = 63
 
-ODDS_DICT = {CASH5_PICKED_COUNT - i:
-             choose(CASH5_PICKED_COUNT, CASH5_PICKED_COUNT - i) *
-             choose(CASH5_FIELD_COUNT - CASH5_PICKED_COUNT, i)
-             / choose(CASH5_FIELD_COUNT, CASH5_PICKED_COUNT)
-             for i in range(CASH5_PICKED_COUNT)}
+CASH5_ODDS_DICT = {CASH5_PICKED_COUNT - i:
+                   choose(CASH5_PICKED_COUNT, CASH5_PICKED_COUNT - i) *
+                   choose(CASH5_FIELD_COUNT - CASH5_PICKED_COUNT, i)
+                   / choose(CASH5_FIELD_COUNT, CASH5_PICKED_COUNT)
+                   for i in range(CASH5_PICKED_COUNT + 1)}
 
 
-PRIZE_DICT = {5: 100000, 4: 250, 3: 5, 2: 1, 1: 0}
+CASH5_PRIZE_DICT = {5: 100000, 4: 250, 3: 5, 2: 1, 1: 0}
 
 
 def back_test(nums: str,
@@ -75,7 +75,7 @@ def back_test(nums: str,
                     x["winners_5"] += 1
                     prize /= x["winners_5"]
             else:
-                prize = PRIZE_DICT[count]
+                prize = CASH5_PRIZE_DICT[count]
 
             x = x.append(
                 pd.Series({"count": count,

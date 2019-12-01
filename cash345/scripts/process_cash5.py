@@ -11,13 +11,14 @@ from bit_manipulations import nums_to_bits, bits_to_nums, popcount64d
 CASH5_FIELD_COUNT = 43
 CASH5_PICKED_COUNT = 5
 CASH5_PRIZE = 100000.0
+
 MAX_BITS = 63
 
-ODDS_DICT = {CASH5_PICKED_COUNT - i:
-             choose(CASH5_PICKED_COUNT, CASH5_PICKED_COUNT - i) *
-             choose(CASH5_FIELD_COUNT - CASH5_PICKED_COUNT, i)
-             / choose(CASH5_FIELD_COUNT, CASH5_PICKED_COUNT)
-             for i in range(CASH5_PICKED_COUNT + 1)}
+CASH5_ODDS_DICT = {CASH5_PICKED_COUNT - i:
+                   choose(CASH5_PICKED_COUNT, CASH5_PICKED_COUNT - i) *
+                   choose(CASH5_FIELD_COUNT - CASH5_PICKED_COUNT, i)
+                   / choose(CASH5_FIELD_COUNT, CASH5_PICKED_COUNT)
+                   for i in range(CASH5_PICKED_COUNT + 1)}
 
 
 def process_cash5(cash5_df: pd.DataFrame) -> pd.DataFrame:
@@ -47,9 +48,8 @@ def process_cash5(cash5_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def calc_tickets(cash5_df: pd.DataFrame) -> pd.DataFrame:
-
     cash5_df["total_tickets"] = (
-        cash5_df["winners_2"] / ODDS_DICT[2] + cash5_df["winners_3"] / ODDS_DICT[3])
+        cash5_df["winners_2"] / CASH5_ODDS_DICT[2] + cash5_df["winners_3"] / CASH5_ODDS_DICT[3]) / 2
 
     cash5_df["winners"] = cash5_df["winners_5"] + \
         cash5_df["winners_4"] + cash5_df["winners_3"] + cash5_df["winners_2"]
@@ -64,8 +64,8 @@ def calc_tickets(cash5_df: pd.DataFrame) -> pd.DataFrame:
 
     cash5_df["profit"] = cash5_df["total_tickets"] - cash5_df["total_prizes"]
 
-    cash5_df["winners_1"] = cash5_df["total_tickets"] * ODDS_DICT[1]
-    cash5_df["winners_0"] = cash5_df["total_tickets"] * ODDS_DICT[0]
+    cash5_df["winners_1"] = cash5_df["total_tickets"] * CASH5_ODDS_DICT[1]
+    cash5_df["winners_0"] = cash5_df["total_tickets"] * CASH5_ODDS_DICT[0]
 
     return cash5_df
 
