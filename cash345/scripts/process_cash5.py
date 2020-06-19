@@ -21,14 +21,29 @@ CASH5_ODDS_DICT = {CASH5_PICKED_COUNT - i:
                    for i in range(CASH5_PICKED_COUNT + 1)}
 
 
-def process_cash5(cash5_df: pd.DataFrame) -> pd.DataFrame:
+def detect_cash_type(cash_df: pd.DataFrame) -> int:
+    return int(
+        max(
+            filter(lambda x: x.find("Number") != -1, cash5_df.columns)
+        ).split(" ")[1]
+    )
+
+
+def process_cash_n(cash_df: pd.DataFrame) -> pd.DataFrame:
+    cash_type = detect_cash_type(cash_df)
+
+    if (cash_type == 5):
+        max_num = CASH5_FIELD_COUNT
+    else:
+        max_num = 9
 
     def _nums_to_bits(x: pd.Series):
         nums = ",".join([str(x[f"Number {i}"])
-                         for i in range(1, CASH5_PICKED_COUNT + 1)])
+                         for i in range(1, cash_type + 1)])
+
         bits = nums_to_bits(nums=nums,
                             bit_length=MAX_BITS,
-                            max_num=CASH5_FIELD_COUNT + 1,
+                            max_num=max_num + 1,
                             delim=",")
 
         date = datetime.datetime.strptime(x["Date"], "%m/%d/%Y")
@@ -42,35 +57,44 @@ def process_cash5(cash5_df: pd.DataFrame) -> pd.DataFrame:
         x = x.append(pd.Series(d))
         return x
 
-    cash5_df = cash5_df.apply(_nums_to_bits, 1)
+    cash_df = cash_df.apply(_nums_to_bits, 1)
 
-    return cash5_df
+    return cash_df
 
 
-def calc_tickets(cash5_df: pd.DataFrame) -> pd.DataFrame:
-    cash5_df["total_tickets"] = (
-        cash5_df["winners_2"] / CASH5_ODDS_DICT[2] + cash5_df["winners_3"] / CASH5_ODDS_DICT[3]) / 2
+def calc_tickets(cash_df: pd.DataFrame) -> pd.DataFrame:
+    cash_type = detect_cash_type(cash_df)
 
-    cash5_df["winners"] = cash5_df["winners_5"] + \
-        cash5_df["winners_4"] + cash5_df["winners_3"] + cash5_df["winners_2"]
+    if (cash_type == 5):
+        cash_df["total_tickets"] = (
+            cash_df["winners_2"] / CASH5_ODDS_DICT[2] + cash_df["winners_3"] / CASH5_ODDS_DICT[3]) / 2
 
-    cash5_df["losers"] = cash5_df["total_tickets"] - cash5_df["winners"]
+        cash_df["winners"] = cash_df["winners_5"] + \
+            cash_df["winners_4"] + \
+            cash_df["winners_3"] + cash_df["winners_2"]
 
-    cash5_df["total_prizes"] = \
-        cash5_df["winners_2"] + 5 * cash5_df["winners_3"] + \
-        cash5_df["prize_4"] * cash5_df["winners_4"] + \
-        cash5_df["prize_5"].str.replace(
-            "^[A-Za-z]+$", "0").astype(float) * cash5_df["winners_5"]
+        cash_df["losers"] = cash_df["total_tickets"] - cash_df["winners"]
 
-    cash5_df["profit"] = cash5_df["total_tickets"] - cash5_df["total_prizes"]
+        cash_df["total_prizes"] = \
+            cash_df["winners_2"] + 5 * cash_df["winners_3"] + \
+            cash_df["prize_4"] * cash_df["winners_4"] + \
+            cash_df["prize_5"].str.replace(
+                "^[A-Za-z]+$", "0").astype(float) * cash_df["winners_5"]
 
-    cash5_df["winners_1"] = cash5_df["total_tickets"] * CASH5_ODDS_DICT[1]
-    cash5_df["winners_0"] = cash5_df["total_tickets"] * CASH5_ODDS_DICT[0]
+        cash_df["profit"] = cash_df["total_tickets"] - \
+            cash_df["total_prizes"]
 
-    return cash5_df
+        cash_df["winners_1"] = cash_df["total_tickets"] * CASH5_ODDS_DICT[1]
+        cash_df["winners_0"] = cash_df["total_tickets"] * CASH5_ODDS_DICT[0]
+    else:
+        pass
+
+    return cash_df
 
 
 # Be sure to process the original csv into a usable format.
 cash5_df = pd.read_csv("cash345/data/cash5_winnings.csv")
-cash5_df = calc_tickets(cash5_df)
-cash5_df.to_csv("cash345/data/cash5_winnings_1.csv", index=False)
+t = detect_cash_type(cash5_df)
+print(t)
+# cash5_df = calc_tickets(cash5_df)
+# cash5_df.to_csv("cash345/data/cash5_winnings_1.csv", index=False)

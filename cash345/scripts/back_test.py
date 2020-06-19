@@ -37,7 +37,7 @@ def back_test(nums: str,
         _date = datetime.datetime.strptime(date, "%m/%d/%Y")
         epoch = int(_date.strftime("%s"))
         pos = (cash5_df["epoch"] == epoch).argmax()
-        print(pos)
+
     else:
         pos = 0
 
@@ -87,7 +87,7 @@ def back_test(nums: str,
     return winnings_df
 
 
-cash5_path = "cash345/data/cash5_winnings.csv"
+cash5_path = "cash345/data/cash5_winnings_1.csv"
 
 cash5_df = pd.read_csv(cash5_path)
 

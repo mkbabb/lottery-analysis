@@ -30,10 +30,12 @@ hdr = {'User-Agent': 'Lottery Research 0.9.0'}
 
 data = {"prize_5": [],
         "prize_4": [],
+
         "winners_5": [],
         "winners_4": [],
         "winners_3": [],
         "winners_2": [],
+
         "jackpot": []}
 
 
@@ -43,7 +45,6 @@ for n, date in enumerate((START_DATE + datetime.timedelta(i)
     try:
         date_string = date.strftime("%m/%d/%Y")
         url = URL_TEMPLATE(date_string)
-
         req = urllib.request.Request(url, headers=hdr)
         response = urllib.request.urlopen(req)
         txt = response.read().decode('utf-8')
