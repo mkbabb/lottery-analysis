@@ -2,18 +2,18 @@ import pandas as pd
 import datetime
 
 
-def get_weekday(x: pd.Series) -> int:
-    date = datetime.datetime.fromtimestamp(x["epoch"])
-    return date.weekday()
+scraped_cash5_path = "cash345/data/cash5_scraped.csv"
+ncel_cash5_bits_path = "cash345/data/NCELCash5_bits.csv"
+out_path = "cash345/data/joined.csv"
 
+scraped_df = pd.read_csv(scraped_cash5_path)
+ncel_cash5_df_processed = pd.read_csv(ncel_cash5_bits_path)
 
-df1 = pd.read_csv("cash345/data/cash5_winnings.csv")
+out_df = scraped_df\
+    .merge(ncel_cash5_df_processed,
+           left_on="date",
+           right_on="Date",
+           how="left")\
+    .drop("Date", axis=1)
 
-df1["weekday"] = df1.apply(get_weekday, 1)
-df1.to_csv("cash345/data/cash5_winnings.csv")
-
-# df2 = pd.read_csv("cash345/data/NCELCash5_bits.csv").iloc[::-1].reset_index()
-
-# df3 = df1.join(df2)
-
-# df3.to_csv("cash345/data/cash5_winnings.csv", index=False)
+out_df.to_csv(out_path, index=False)

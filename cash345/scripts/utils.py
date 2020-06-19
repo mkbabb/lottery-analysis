@@ -1,8 +1,9 @@
 import math
-from typing import Dict, List, Callable, Any
+from typing import *
 import itertools
 from functools import reduce
 import random
+import os
 import datetime
 
 import numpy as np
@@ -13,16 +14,25 @@ import re
 RE_WHITESPACE = re.compile("\s+")
 
 
-def dollar_to_float(s: str) -> float:
-    s = s.strip()
+def file_components(filepath: str) -> Tuple[str, str, str]:
+    dirpath = os.path.dirname(os.path.realpath(filepath))
+    filename, ext = os.path.splitext(os.path.basename(filepath))
+    return (dirpath, filename, ext)
+
+
+def dollar_to_float(s: str) -> Optional[float]:
+    if (isinstance(s, (float, int))):
+        return s
+    s = s.replace(",", "")
     ix = s.find("$")
+
     if (ix != -1):
         s = s[ix + 1:]
 
     try:
         return float(s.replace(",", ""))
-    except TypeError:
-        return 0
+    except:
+        return None
 
 
 def sanitize_string(s: str, white_space: str = "") -> str:

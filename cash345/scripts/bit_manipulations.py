@@ -265,18 +265,3 @@ def example1():
     print(len(bs2))
     print(len(bs3))
     print(bits_to_nums_small(b1, 64, ","))
-
-
-def test_splitting():
-    for i in range(2, 10):
-        for j in range(2, 10000):
-            group = max_uniform_split(j, i, 2, {})
-            M = sum(map(
-                lambda x: x[0] * x[1],
-                zip(group[::2], group[1::2])))
-            # print(f"original: {j}, interval: {i} | mapped: {M}")
-            # print(group)
-            assert(j == M)
-
-
-# example1()
