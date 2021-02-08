@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
 import pandas as pd
 import numpy as np
+import pathlib
 
 from bit_manipulations import bits_to_nums, nums_to_bits, popcount64d
 
@@ -75,52 +76,13 @@ def totimestamp(dt: datetime.datetime) -> int:
     return int((dt - epoch).total_seconds())
 
 
-def accumulate_by(arr: list,
-                  shape: List[int],
-                  strides: List[int],
-                  axis_counter: List[int] = None) -> List[int]:
+def process_wagers(wagers: pd.DataFrame) -> pd.DataFrame:
     '''
-    Accumulates strides[i] by shape[i] into arr.
-    The routine below is essentially a multi-dimensional array indexing routine,
-    hence the utilization of variable names 'shape' and 'strides'.
+    Initial pre-processing of the wagers DataFrame.
 
-    @param arr: array wherewith the data is accumulated into.
-    @param shape: array wherewith the interval of accumulation is therein described.
-    @param strides: array wherewith the amount of accumulation is therein described.
-    @param axis_counter: array utilized for initializing the indexing.
+    @param wagers: DataFrame containing keno wagers data.
 
-    @returns: arr
-    '''
-    i = 1
-    mdim = len(strides)
-    if (axis_counter is None):
-        axis_counter = [0] * mdim
-
-    stride_shape = list(map(lambda x: x[0] * x[1],
-                            zip(shape, strides)))
-    while (i < len(arr)):
-        axis_counter[0] += strides[0]
-
-        for j in range(1, mdim):
-            if axis_counter[j - 1] >= stride_shape[j - 1]:
-                axis_counter[j - 1] = 0
-                axis_counter[j] += strides[j]
-
-        ix = sum(axis_counter)
-        arr[i] += ix
-        # print(datetime.datetime.utcfromtimestamp(arr[i]).strftime(
-        #     '%Y-%m-%d %H:%M:%S'), axis_counter, i)
-        i += 1
-    return arr
-
-
-def process_tickets(tickets: pd.DataFrame) -> pd.DataFrame:
-    '''
-    Initial pre-processing of the tickets DataFrame.
-
-    @param tickets: DataFrame containing keno tickets data.
-
-    @returns tickets: modified tickets DataFrame.
+    @returns wagers: modified wagers DataFrame.
     '''
 
     def bool_coalesce(b: str) -> int:
@@ -141,8 +103,6 @@ def process_tickets(tickets: pd.DataFrame) -> pd.DataFrame:
         x[2] = bool_coalesce(x[2])
         x[3] //= delta
 
-        
-
         if (delta > 1):
             x = x.reshape((1, -1))
             x = x.repeat(delta, axis=0)
@@ -150,7 +110,7 @@ def process_tickets(tickets: pd.DataFrame) -> pd.DataFrame:
             x = np.append(x, t, axis=1)
         return x
 
-    tmp = np.apply_along_axis(func, -1, tickets.values)
+    tmp = np.apply_along_axis(func, -1, wagers.values)
     print(tmp)
 
     # def expand_draw_number(df: pd.Series) -> None:
@@ -171,17 +131,18 @@ def process_tickets(tickets: pd.DataFrame) -> pd.DataFrame:
 
     #     dfs.append(pd.DataFrame(tmp).reset_index(drop=True))
 
-    # tickets.apply(
+    # wagers.apply(
     #     expand_draw_number, axis=1)
 
-    # tickets = pd.concat(dfs, axis=0, ignore_index=True)
+    # wagers = pd.concat(dfs, axis=0, ignore_index=True)
 
-    return tickets
+    return wagers
 
 
 def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
     '''
     Initial pre-processing of the drawings DataFrame.
+
     Processes the lottery numbers into their corresponding
     bit and integer array counterparts.
     Thereinafter, the dates are formatted (by accumulation)
@@ -241,27 +202,27 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
     return drawings.set_index("id")
 
 
-def process_numbers_wagered(tickets: pd.DataFrame) -> pd.DataFrame:
+def process_numbers_wagered(wagers: pd.DataFrame) -> pd.DataFrame:
     '''
     For the creation of the secondary foreign key table 'number_wagered'.
     Allows for once-over preprocessing of unique ticket lottery numbers.
-    Equates to a roughly 80% size reduction of the tickets DataFrame.
+    Equates to a roughly 80% size reduction of the wagers DataFrame.
 
     Utilizes the same process by which 'process_drawings' processes
     the lottery numbers.
 
-    @param tickets: DataFrame containing keno tickets data.
+    @param wagers: DataFrame containing keno wagers data.
 
     @returns number_wagered: new 'number_wagered' DataFrame wherewith the
                     subsequent ticket lottery numbers are stored.
     '''
-    numbers_wagered = tickets["numbers_wagered"]\
+    numbers_wagered = wagers["numbers_wagered"]\
         .drop_duplicates()\
         .reset_index(drop=True)\
         .to_frame("number_string")
 
     ratio = numbers_wagered["number_string"].shape[0] / \
-        tickets["numbers_wagered"].shape[0]
+        wagers["numbers_wagered"].shape[0]
 
     def to_bits(df: pd.Series) -> pd.Series:
         l = nums_to_bits(df["number_string"],
@@ -269,9 +230,9 @@ def process_numbers_wagered(tickets: pd.DataFrame) -> pd.DataFrame:
                          max_num=MAX_NUMBERS,
                          num_length=2)
 
-        # df["number_string"] = bits_to_nums(l,
-        #                                    delim=",",
-        #                                    bit_length=MAX_BITS)
+        df["number_string"] = bits_to_nums(l,
+                                           delim=",",
+                                           bit_length=MAX_BITS)
         l.append(sum(map(popcount64d, l)))
 
         d = pd.Series(dict(zip(["low_bits",
@@ -290,9 +251,9 @@ def process_numbers_wagered(tickets: pd.DataFrame) -> pd.DataFrame:
         numbers_wagered.index,)
     )
 
-    tickets["numbers_wagered"] = tickets["numbers_wagered"]\
+    wagers["numbers_wagered"] = wagers["numbers_wagered"]\
         .map(numbers_wagered_dict.get)
-    tickets.rename(
+    wagers.rename(
         columns={"numbers_wagered": "numbers_wagered_id"}, inplace=True)
 
     return numbers_wagered
@@ -302,14 +263,14 @@ def calculate_prize(df: pd.Series,
                     numbers_wagered: pd.DataFrame,
                     drawings: pd.DataFrame) -> pd.Series:
     '''
-    Function applied to all rows in the 'tickets' DataFrame.
+    Function applied to all rows in the 'wagers' DataFrame.
     Utilized normally via pd.apply.
 
     Principally, this function is responsible for the bit-wise AND'ing of
     two lottery numbers, allowing for fast matching of theretofore
     mentioned numbers.
 
-    @param x: 'numbers_wagered_id' and 'draw_number_id' element of the 'tickets' DataFrame
+    @param x: 'numbers_wagered_id' and 'draw_number_id' element of the 'wagers' DataFrame
     @param spots: DataFrame containing spots data.
     @param drawings: DataFrame containing keno drawings data.
 
@@ -326,7 +287,6 @@ def calculate_prize(df: pd.Series,
     number_played = numbers_wagered.loc[number_wagered_id, "numbers_played"]
 
     try:
-
         high_bits2 = drawings.loc[draw_number_id, "high_bits"]
         low_bits2 = drawings.loc[draw_number_id, "low_bits"]
 
@@ -337,10 +297,6 @@ def calculate_prize(df: pd.Series,
                                   [low_bits2, high_bits2])))
         numbers_matched = sum(
             map(lambda x: popcount64d(x), match_mask))
-
-        # print(numbers_wagered.loc[number_wagered_id, "number_string"])
-        # print(drawings.loc[draw_number_id, "number_string"])
-        # print(numbers_matched)
 
         try:
             prize = PRIZE_DICT[number_played][numbers_matched]
@@ -360,64 +316,56 @@ def calculate_prize(df: pd.Series,
 
     df = df.append(d)
 
-    # if (df["prize"] > 0):
-    #     print(df)
-    #     print(drawings.loc[draw_number_id, "number_string"])
-    #     print(numbers_wagered.loc[number_wagered_id, "number_string"])
-
     return df
 
 
-def find_winnings(tickets: pd.DataFrame,
+def find_winnings(wagers: pd.DataFrame,
                   numbers_wagered: pd.DataFrame,
                   drawings: pd.DataFrame) -> pd.DataFrame:
     '''
     Function to find the prize amount of each item in the
-    'tickets' DataFrame.
+    'wagers' DataFrame.
 
     Most of the work is done within 'calculate_prize' function.
 
-    @param tickets: DataFrame containing keno tickets data.
+    @param wagers: DataFrame containing keno wagers data.
     @param numbers_wagered: DataFrame containing numbers_wagered data.
     @param drawings: DataFrame containing keno drawings data.
 
-    @returns tickets: modified 'tickets' DataFrame.
+    @returns wagers: modified 'wagers' DataFrame.
 
     '''
-    tickets = tickets\
+    wagers = wagers\
         .apply(lambda x: calculate_prize(x, numbers_wagered, drawings), axis=1, result_type="expand")
 
-    return tickets
+    return wagers
+
+
+def concat_csv(filepaths: List[str], sep: str, out_filepath: Optional[str], names: Optional[List[str]]) -> pd.DataFrame:
+    has_header = None if names is not None else True
+
+    dfs = (pd.read_csv(filepath, sep=sep, names=names, header=has_header)
+           for filepath in filepaths)
+
+    df = pd.concat(dfs, axis=1)
+
+    if (out_filepath is not None):
+        df.to_csv(out_filepath, index=False)
+
+    return df
+
+
+data_dir = "keno/data/keno_2017_2019/"
 
 
 conn = sqlite3.connect(
     "keno/data/keno_2017_2019/keno_v2.db")
 
-drawings = pd.read_csv(
-    "keno/data/keno_2017_2019/keno_draw_data.csv",
-    sep=";")
-tickets = pd.read_csv(
-    "keno/data/keno_2017_2019/keno_wager_data.csv",
-    sep=";")
+wagers_paths = list(pathlib.Path(data_dir).glob("*wager*"))
+wagers = concat_csv(wagers_paths)
 
-
-# t_drawings = process_drawings(drawings[:5])
-# t_tickets = process_tickets(tickets[4984246:4984260])
-# t_numbers_wagered = process_numbers_wagered(t_tickets)
-
-# t_drawings = process_drawings(drawings)
-t_tickets = process_tickets(tickets[:50])
-t_tickets.to_csv(
-    "keno/data/keno_2017_2019/keno_wager_data_expanded.csv",
-    sep=";",
-    index=False)
-# t_numbers_wagered = process_numbers_wagered(t_tickets)
-
-# t_tickets = find_winnings(t_tickets, t_numbers_wagered, t_drawings)
-
-# print(t_tickets)
-# print(t_drawings)
-# print(t_numbers_wagered)
+drawings_paths = list(pathlib.Path(data_dir).glob("*drawing*"))
+drawings = concat_csv(drawings_paths)
 
 
 # t_drawings.to_sql(name="drawings",
