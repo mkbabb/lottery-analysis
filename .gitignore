@@ -9,5 +9,6 @@ bootstrap/
 storage/
 auth/
 my_venv/
-data/
+**/data/
 __pycache__/
+build/

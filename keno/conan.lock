@@ -1,0 +1,34 @@
+{
+ "graph_lock": {
+  "nodes": {
+   "0": {
+    "options": "fast-cpp-csv-parser:with_thread=True\nfmt:fPIC=True\nfmt:header_only=False\nfmt:shared=False\nfmt:with_fmt_alias=False",
+    "requires": [
+     "1",
+     "2"
+    ],
+    "path": "conanfile.txt",
+    "context": "host"
+   },
+   "1": {
+    "ref": "fast-cpp-csv-parser/cci.20200830",
+    "options": "with_thread=True",
+    "package_id": "5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9",
+    "prev": "0",
+    "modified": true,
+    "context": "host"
+   },
+   "2": {
+    "ref": "fmt/7.1.2",
+    "options": "fPIC=True\nheader_only=False\nshared=False\nwith_fmt_alias=False",
+    "package_id": "748830586d70ff03b48148bb25c70b351e059bb7",
+    "prev": "0",
+    "modified": true,
+    "context": "host"
+   }
+  },
+  "revisions_enabled": false
+ },
+ "version": "0.4",
+ "profile_host": "[settings]\narch=x86_64\narch_build=x86_64\nbuild_type=Debug\ncompiler=clang\ncompiler.libcxx=libc++\ncompiler.version=11\nos=Macos\nos_build=Macos\n[options]\n[build_requires]\n[env]\nCC=/usr/local/opt/llvm/bin/clang\nCXX=/usr/local/opt/llvm/bin/clang++"
+}

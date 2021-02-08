@@ -1,0 +1,6 @@
+ [requires]
+ fast-cpp-csv-parser/cci.20200830
+ fmt/7.1.2
+
+ [generators]
+ cmake
