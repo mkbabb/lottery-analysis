@@ -96,7 +96,7 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
     )
 
     def to_bits(df: pd.Series) -> pd.Series:
-        l = nums_to_bits(
+        bit_info = nums_to_bits(
             df["number_string"],
             bit_length=MAX_BITS,
             max_num=MAX_NUMBERS,
@@ -104,19 +104,20 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
             delim=" ",
         )
 
-        df["number_string"] = bits_to_nums(l, delim=",", bit_length=MAX_BITS)
+        df["number_string"] = bits_to_nums(bit_info, delim=",", bit_length=MAX_BITS)
 
-        d = pd.Series(dict(zip(["low_bits", "high_bits"], l)))
+        d = pd.Series(dict(zip(["low_bits", "high_bits"], bit_info)))
         df = df.append(d)
 
         return df
 
     drawings = drawings.apply(to_bits, axis=1, result_type="expand")
 
-    # The below will need to be modified to accommodate the new v2 formatting.
     drawings["date"] = 0
 
-    return drawings.set_index("id")
+    drawings.set_index("id", inplace=True)
+
+    return drawings
 
 
 def create_numbers_wagered(
