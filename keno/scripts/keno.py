@@ -343,6 +343,8 @@ data_dir = "keno/data/keno_2017_2019/"
 
 wagers, drawings = process_keno_split_data(data_dir=data_dir)
 
+drawings = process_drawings(drawings)
+
 wagers, numbers_wagered = create_numbers_wagered(wagers)
 
 # wagers = find_and_set_winnings(
