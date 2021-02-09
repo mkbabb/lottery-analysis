@@ -71,8 +71,9 @@ main()
     int ticket_cost;
     std::string numbers_wagered;
 
-    in_file.next_line();
     int n = 0;
+
+    in_file.next_line();
     while (in_file.read_row(begin_draw, end_draw, qp, ticket_cost, numbers_wagered)) {
         wager_row base_row{ .id = n,
                             .begin_draw = begin_draw,

@@ -8,7 +8,6 @@ from typing import *
 import pandas as pd
 
 from bit_manipulations import bits_to_nums, nums_to_bits, popcount64d
-
 from schemas import *
 
 MAX_BITS = 63
@@ -279,7 +278,6 @@ def find_and_set_winnings(
 def concat_csv(
     filepaths: List[str],
     sep: str,
-    out_filepath: Optional[str] = None,
     names: Optional[List[str]] = None,
 ) -> pd.DataFrame:
     has_header = None if names is not None else True
@@ -288,55 +286,31 @@ def concat_csv(
         pd.read_csv(filepath, sep=sep, names=names, header=has_header)
         for filepath in filepaths
     )
-
-    df = pd.concat(dfs)
-
-    if out_filepath is not None:
-        df.to_csv(out_filepath, index=False)
-
-    return df
+    return pd.concat(dfs)
 
 
 def process_keno_split_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    wagers_out_path = os.path.join(data_dir, "wagers.csv")
-    drawings_out_path = os.path.join(data_dir, "drawings.csv")
-
     get_paths = lambda glob: list(
         sorted(map(lambda x: str(x), pathlib.Path(data_dir).glob(glob)))
     )
 
-    def read_or_process(file_path: str, func: Callable) -> pd.DataFrame:
-        if not os.path.exists(file_path):
-            df = func()
-            df.to_csv(file_path, index=False)
-            return df
-        else:
-            return pd.read_csv(file_path)
-
-    def get_wagers() -> pd.DataFrame:
-        wagers_paths = get_paths("split/*wager*")
-        wagers_names = "begin_draw;end_draw;qp;ticket_cost;numbers_wagered".split(";")
-        return concat_csv(
-            wagers_paths,
-            sep=";",
-            out_filepath=wagers_out_path,
-            names=wagers_names,
-        )
-
-    def get_drawings() -> pd.DataFrame:
-        drawings_paths = get_paths("split/*draw*")
-        drawings_names = "Draw Nbr;Draw Date;Winning Number String".split(";")
-        return concat_csv(
-            drawings_paths,
-            sep=";",
-            out_filepath=drawings_out_path,
-            names=drawings_names,
-        )
-
-    wagers, drawings = read_or_process(wagers_out_path, get_wagers), read_or_process(
-        drawings_out_path, get_drawings
+    wagers_paths = get_paths("split/*wager*")
+    wagers_names = "begin_draw;end_draw;qp;ticket_cost;numbers_wagered".split(";")
+    wagers = concat_csv(
+        wagers_paths,
+        sep=";",
+        names=wagers_names,
     )
-    return wagers[:100], drawings
+
+    drawings_paths = get_paths("split/*draw*")
+    drawings_names = "Draw Nbr;Draw Date;Winning Number String".split(";")
+    drawings = concat_csv(
+        drawings_paths,
+        sep=";",
+        names=drawings_names,
+    )
+
+    return wagers, drawings
 
 
 conn = sqlite3.connect("keno/data/keno_2017_2019/keno_v3.db")
@@ -345,29 +319,32 @@ data_dir = "keno/data/keno_2017_2019/"
 
 wagers, drawings = process_keno_split_data(data_dir=data_dir)
 
-drawings = process_drawings(drawings)
+# drawings = process_drawings(drawings)
 
-# wagers, numbers_wagered = create_numbers_wagered(wagers)
+wagers, numbers_wagered = create_numbers_wagered(wagers)
 
 # wagers = find_and_set_winnings(
 #     wagers=wagers, numbers_wagered=numbers_wagered, drawings=drawings
 # )
 
+wagers = pd.read_sql_table("wagers", con=conn)
+# drawings = pd.read_sql_table("drawings", con=conn)
 
-drawings.to_sql(
-    name="drawings",
-    con=conn,
-    schema=DRAWINGS_SCHEMA,
-    if_exists="replace",
-    index_label="id",
-)
-# numbers_wagered.to_sql(
-#     name="numbers_wagered",
+
+# drawings.to_sql(
+#     name="drawings",
 #     con=conn,
-#     schema=NUMBERS_WAGERED_SCHEMA,
+#     schema=DRAWINGS_SCHEMA,
 #     if_exists="replace",
 #     index_label="id",
 # )
-# wagers.to_sql(
-#     name="wagers", con=conn, schema=WAGERS_SCHEMA, if_exists="replace", index_label="id"
-# )
+numbers_wagered.to_sql(
+    name="numbers_wagered",
+    con=conn,
+    schema=NUMBERS_WAGERED_SCHEMA,
+    if_exists="replace",
+    index_label="id",
+)
+wagers.to_sql(
+    name="wagers", con=conn, schema=WAGERS_SCHEMA, if_exists="replace", index_label="id"
+)
