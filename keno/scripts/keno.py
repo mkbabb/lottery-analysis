@@ -119,7 +119,9 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
     return drawings.set_index("id")
 
 
-def create_numbers_wagered(wagers: pd.DataFrame) -> pd.DataFrame:
+def create_numbers_wagered(
+    wagers: pd.DataFrame, numbers_wagered: Optional[pd.DataFrame] = None
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
     For the creation of the secondary foreign key table 'number_wagered'.
     Allows for once-over preprocessing of unique ticket lottery numbers.
@@ -133,27 +135,33 @@ def create_numbers_wagered(wagers: pd.DataFrame) -> pd.DataFrame:
     @returns number_wagered: new 'number_wagered' DataFrame wherewith the
                     subsequent ticket lottery numbers are stored.
     """
-    numbers_wagered = (
-        wagers["numbers_wagered"]
-        .drop_duplicates()
-        .reset_index(drop=True)
-        .to_frame("number_string")
-    )
 
-    def to_bits(df: pd.Series) -> pd.Series:
-        l = nums_to_bits(
-            df["number_string"], bit_length=MAX_BITS, max_num=MAX_NUMBERS, num_length=2
+    def get_bit_info(nums: str) -> Tuple[list, str]:
+        bit_info = nums_to_bits(
+            nums, bit_length=MAX_BITS, max_num=MAX_NUMBERS, num_length=2
         )
 
-        df["number_string"] = bits_to_nums(l, delim=",", bit_length=MAX_BITS)
-        l.append(sum(map(popcount64d, l)))
+        return bit_info, bits_to_nums(bit_info, delim=",", bit_length=MAX_BITS)
 
-        d = pd.Series(dict(zip(["low_bits", "high_bits", "numbers_played"], l)))
-        df = df.append(d)
+    def to_bits(row: pd.Series) -> pd.Series:
+        bit_info, number_string = get_bit_info(row["number_string"])
 
-        return df
+        row["number_string"] = number_string
+        bit_info.append(sum(map(popcount64d, bit_info)))
 
-    numbers_wagered = numbers_wagered.apply(to_bits, axis=1, result_type="expand")
+        d = pd.Series(dict(zip(["low_bits", "high_bits", "numbers_played"], bit_info)))
+        row = row.append(d)
+
+        return row
+
+    if numbers_wagered is None:
+        numbers_wagered = (
+            wagers["numbers_wagered"]
+            .drop_duplicates()
+            .reset_index(drop=True)
+            .to_frame("number_string")
+        )
+        numbers_wagered = numbers_wagered.apply(to_bits, axis=1, result_type="expand")
 
     numbers_wagered_dict = dict(
         zip(
@@ -161,82 +169,13 @@ def create_numbers_wagered(wagers: pd.DataFrame) -> pd.DataFrame:
             numbers_wagered.index,
         )
     )
-
-    wagers["numbers_wagered"] = wagers["numbers_wagered"].map(numbers_wagered_dict.get)
-    wagers.rename(columns={"numbers_wagered": "numbers_wagered_id"}, inplace=True)
-
-    return numbers_wagered
-
-
-def calculate_prize(
-    df: pd.Series, numbers_wagered: pd.DataFrame, drawings: pd.DataFrame
-) -> pd.Series:
-    """
-    Function applied to all rows in the 'wagers' DataFrame.
-    Utilized normally via pd.apply.
-
-    Principally, this function is responsible for the bit-wise AND'ing of
-    two lottery numbers, allowing for fast matching of theretofore
-    mentioned numbers.
-
-    @param x: 'numbers_wagered_id' and 'draw_number_id' element of the 'wagers' DataFrame
-    @param spots: DataFrame containing spots data.
-    @param drawings: DataFrame containing keno drawings data.
-
-    @returns match_mask: array of high and low bits of the match,
-                         hamming weight (number of spots played),
-                         and date.
-    """
-
-    number_wagered_id = df["numbers_wagered_id"]
-    draw_number_id = df["draw_number_id"]
-
-    high_bits1 = numbers_wagered.loc[number_wagered_id, "high_bits"]
-    low_bits1 = numbers_wagered.loc[number_wagered_id, "low_bits"]
-    number_played = numbers_wagered.loc[number_wagered_id, "numbers_played"]
-
-    try:
-        high_bits2 = drawings.loc[draw_number_id, "high_bits"]
-        low_bits2 = drawings.loc[draw_number_id, "low_bits"]
-
-        date = drawings.loc[draw_number_id, "date"]
-
-        match_mask = list(
-            map(
-                lambda x: x[0] & x[1],
-                zip([low_bits1, high_bits1], [low_bits2, high_bits2]),
-            )
-        )
-        numbers_matched = sum(map(lambda x: popcount64d(x), match_mask))
-
-        try:
-            prize = PRIZE_DICT[number_played][numbers_matched]
-            match_mask += [numbers_matched, prize, date]
-
-        except KeyError:
-            match_mask += [numbers_matched, 0, date]
-
-    except KeyError:
-        match_mask = [0, 0, 0, 0, 0]
-
-    d = pd.Series(
-        dict(
-            zip(
-                [
-                    "high_match_mask",
-                    "low_match_mask",
-                    "numbers_matched",
-                    "prize",
-                    "date",
-                ],
-                match_mask,
-            )
-        )
+    wagers["numbers_wagered_id"] = wagers["numbers_wagered"].map(
+        lambda x: numbers_wagered_dict.get(get_bit_info(x)[1])
     )
 
-    df = df.append(d)
+    wagers.drop("numbers_wagered", axis=1, inplace=True)
 
-    return df
+    return wagers, numbers_wagered
 
 
 def find_and_set_winnings(
@@ -255,6 +194,76 @@ def find_and_set_winnings(
     @returns wagers: modified 'wagers' DataFrame.
 
     """
+
+    def calculate_prize(
+        df: pd.Series, numbers_wagered: pd.DataFrame, drawings: pd.DataFrame
+    ) -> pd.Series:
+        """
+        Function applied to all rows in the 'wagers' DataFrame.
+        Utilized normally via pd.apply.
+
+        Principally, this function is responsible for the bit-wise AND'ing of
+        two lottery numbers, allowing for fast matching of theretofore
+        mentioned numbers.
+
+        @param x: 'numbers_wagered_id' and 'draw_number_id' element of the 'wagers' DataFrame
+        @param spots: DataFrame containing spots data.
+        @param drawings: DataFrame containing keno drawings data.
+
+        @returns match_mask: array of high and low bits of the match,
+                            hamming weight (number of spots played),
+                            and date.
+        """
+
+        number_wagered_id = df["numbers_wagered_id"]
+        draw_number_id = df["draw_number_id"]
+
+        high_bits1 = numbers_wagered.loc[number_wagered_id, "high_bits"]
+        low_bits1 = numbers_wagered.loc[number_wagered_id, "low_bits"]
+        number_played = numbers_wagered.loc[number_wagered_id, "numbers_played"]
+
+        try:
+            high_bits2 = drawings.loc[draw_number_id, "high_bits"]
+            low_bits2 = drawings.loc[draw_number_id, "low_bits"]
+
+            date = drawings.loc[draw_number_id, "date"]
+
+            match_mask = list(
+                map(
+                    lambda x: x[0] & x[1],
+                    zip([low_bits1, high_bits1], [low_bits2, high_bits2]),
+                )
+            )
+            numbers_matched = sum(map(lambda x: popcount64d(x), match_mask))
+
+            try:
+                prize = PRIZE_DICT[number_played][numbers_matched]
+                match_mask += [numbers_matched, prize, date]
+
+            except KeyError:
+                match_mask += [numbers_matched, 0, date]
+
+        except KeyError:
+            match_mask = [0, 0, 0, 0, 0]
+
+        d = pd.Series(
+            dict(
+                zip(
+                    [
+                        "high_match_mask",
+                        "low_match_mask",
+                        "numbers_matched",
+                        "prize",
+                        "date",
+                    ],
+                    match_mask,
+                )
+            )
+        )
+
+        df = df.append(d)
+        return df
+
     wagers = wagers.apply(
         lambda x: calculate_prize(x, numbers_wagered, drawings),
         axis=1,
@@ -285,41 +294,60 @@ def concat_csv(
     return df
 
 
+def process_keno_split_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    wagers_out_path = os.path.join(data_dir, "wagers.csv")
+    drawings_out_path = os.path.join(data_dir, "drawings.csv")
+
+    get_paths = lambda glob: list(
+        sorted(map(lambda x: str(x), pathlib.Path(data_dir).glob(glob)))
+    )
+
+    def read_or_process(file_path: str, func) -> pd.DataFrame:
+        if not os.path.exists(file_path):
+            df = func()
+            df.to_csv(file_path, index=False)
+            return df
+        else:
+            return pd.read_csv(file_path)
+
+    def get_wagers() -> pd.DataFrame:
+        wagers_paths = get_paths("split/*wager*")
+        wagers_names = "begin_draw;end_draw;qp;ticket_cost;numbers_wagered".split(";")
+        return concat_csv(
+            wagers_paths,
+            sep=";",
+            out_filepath=wagers_out_path,
+            names=wagers_names,
+        )
+
+    def get_drawings() -> pd.DataFrame:
+        drawings_paths = get_paths("split/*draw*")
+        drawings_names = "Draw Nbr;Draw Date;Winning Number String".split(";")
+        return concat_csv(
+            drawings_paths,
+            sep=";",
+            out_filepath=drawings_out_path,
+            names=drawings_names,
+        )
+
+    wagers, drawings = read_or_process(wagers_out_path, get_wagers), read_or_process(
+        drawings_out_path, get_drawings
+    )
+    return wagers[:100], drawings
+
+
 conn = sqlite3.connect("keno/data/keno_2017_2019/keno_v3.db")
 
 data_dir = "keno/data/keno_2017_2019/"
 
 
-get_paths = lambda glob: list(
-    sorted(map(lambda x: str(x), pathlib.Path(data_dir).glob(glob)))
-)
+wagers, drawings = process_keno_split_data(data_dir=data_dir)
 
-wagers_paths = get_paths("split/*wager*")
-wagers_names = "begin_draw;end_draw;qp;ticket_cost;numbers_wagered".split(";")
+wagers, numbers_wagered = create_numbers_wagered(wagers)
 
-wagers = concat_csv(
-    wagers_paths,
-    sep=";",
-    out_filepath=os.path.join(data_dir, "wagers.csv"),
-    names=wagers_names,
-)[:100]
-
-drawings_paths = get_paths("split/*draw*")
-drawings_names = "Draw Nbr;Draw Date;Winning Number String".split(";")
-
-drawings = concat_csv(
-    drawings_paths,
-    sep=";",
-    out_filepath=os.path.join(data_dir, "drawings.csv"),
-    names=drawings_names,
-)
-
-
-numbers_wagered = create_numbers_wagered(wagers)
-
-wagers = find_and_set_winnings(
-    wagers=wagers, numbers_wagered=numbers_wagered, drawings=drawings
-)
+# wagers = find_and_set_winnings(
+#     wagers=wagers, numbers_wagered=numbers_wagered, drawings=drawings
+# )
 
 
 drawings.to_sql(
