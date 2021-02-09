@@ -1,12 +1,15 @@
-import datetime
+import bisect
 import os
 import pathlib
 import sqlite3
+from datetime import datetime, timedelta
 from typing import *
 
 import pandas as pd
 
 from bit_manipulations import bits_to_nums, nums_to_bits, popcount64d
+
+from schemas import *
 
 MAX_BITS = 63
 MAX_NUMBERS = 80 + 1
@@ -24,58 +27,63 @@ PRIZE_DICT: Dict[int, Dict[int, int]] = {
     1: {1: 2},
 }
 
-DRAWINGS_SCHEMA = """
-CREATE TABLE "drawings" (
-	"id"	INTEGER UNIQUE,
-	"date"	INTEGER,
-	"high_bits"	UNSIGNED SMALL INTEGER NOT NULL,
-	"low_bits"	UNSIGNED INTEGER NOT NULL,
-	"number_string"	TEXT,
-	PRIMARY KEY("id")
-);
-"""
+
+class KenoTime:
+    def __init__(self, start_date: datetime, end_date: datetime, delta: timedelta):
+        self.start_date = start_date
+        self.end_date = end_date
+        self.delta = delta
+        # Shift by one day, and add (inclusive range).
+        self.intervals = ((end_date + timedelta(days=1)) - start_date) // delta + 1
 
 
-WAGERS_SCHEMA = """
-CREATE TABLE "wagers" (
-	"id"	INTEGER PRIMARY KEY AUTOINCREMENT,
-    "date" INTEGER,
-	"draw_number_id"	INTEGER,
-    "begin_draw"  INTEGER,
-    "end_draw"  INTEGER,
-    "qp"    UNSIGNED INTEGER,
-    "ticket_cost" INTEGER,
-	"numbers_wagered_id"	INTEGER,
-	"numbers_matched"	TINY INT,
-	"high_match_mask"	UNSIGNED SMALL INTEGER,
-	"low_match_mask"	UNSIGNED INTEGER,
-	"prize"	UNSIGNED INT,
-	FOREIGN KEY("draw_number_id") REFERENCES "drawings"("id"),
-	FOREIGN KEY("date") REFERENCES "drawings"("date"),
-	FOREIGN KEY("numbers_wagered") REFERENCES "numbers_wagered"("id")
-);
-"""
+def normalize_draw_dates(dates: pd.Series) -> Callable[[int], int]:
+    KENO_TIMES = [
+        KenoTime(
+            datetime.fromisoformat("1970-01-01T05:05"),
+            datetime.fromisoformat("1970-01-01T01:45"),
+            timedelta(minutes=5),
+        ),
+        KenoTime(
+            datetime.fromisoformat("2020-01-01T05:05"),
+            datetime.fromisoformat("2020-01-01T01:45"),
+            timedelta(minutes=4),
+        ),
+    ]
+    START_DATES = list(map(lambda x: x.start_date, KENO_TIMES))
+    # Each day's worth of draws should equal exactly
+    # to the number of KenoTime intervals (249 up until 2020).
+    # If this isn't the case, then that day is malformed in some way.
+    offsets = dates.value_counts().to_dict()
 
-NUMBERS_WAGERED_SCHEMA = """
-CREATE TABLE "numbers_wagered" (
-	"id"	INTEGER PRIMARY KEY AUTOINCREMENT,
-	"number_string"	TEXT,
-	"high_bits"	UNSIGNED SMALL INTEGER,
-	"low_bits"	UNSIGNED INTEGER,
-	"numbers_played"	TINY INTEGER
-);
-"""
+    prev_date: Optional[datetime] = None
 
-epoch = datetime.datetime.utcfromtimestamp(0)
+    def calc_dates(time: int) -> int:
+        nonlocal prev_date
+        date = datetime.strptime(str(time), "%Y%m%d")
 
+        ix = bisect.bisect_left(START_DATES, date) - 1
+        keno_time = KENO_TIMES[ix]
 
-def totimestamp(dt: datetime.datetime) -> int:
-    return int((dt - epoch).total_seconds())
+        offset = keno_time.intervals - offsets[time]
+
+        if offset > 0:
+            prev_date = None
+            return int(date.timestamp())
+        else:
+            if prev_date is None or prev_date.time() == keno_time.end_date.time():
+                start_date = keno_time.start_date
+                prev_date = date.replace(hour=start_date.hour, minute=start_date.minute)
+            else:
+                prev_date += keno_time.delta
+
+            return int(prev_date.timestamp())
+
+    return calc_dates
 
 
 def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
-    """
-    Initial pre-processing of the drawings DataFrame.
+    """Initial pre-processing of the drawings DataFrame.
 
     Processes the lottery numbers into their corresponding
     bit and integer array counterparts.
@@ -93,29 +101,27 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
             "Draw Date": "date",
             "Winning Number String": "number_string",
         }
-    )
+    ).set_index("id")
 
-    def to_bits(df: pd.Series) -> pd.Series:
+    normalize_draw_dates_func = normalize_draw_dates(drawings["date"])
+
+    def func(row: pd.Series) -> pd.Series:
         bit_info = nums_to_bits(
-            df["number_string"],
+            row["number_string"],
             bit_length=MAX_BITS,
             max_num=MAX_NUMBERS,
             num_length=2,
             delim=" ",
         )
-
-        df["number_string"] = bits_to_nums(bit_info, delim=",", bit_length=MAX_BITS)
-
+        row["number_string"] = bits_to_nums(bit_info, delim=",", bit_length=MAX_BITS)
         d = pd.Series(dict(zip(["low_bits", "high_bits"], bit_info)))
-        df = df.append(d)
+        row = row.append(d)
 
-        return df
+        row["date"] = normalize_draw_dates_func(row["date"])
 
-    drawings = drawings.apply(to_bits, axis=1, result_type="expand")
+        return row
 
-    drawings["date"] = 0
-
-    drawings.set_index("id", inplace=True)
+    drawings = drawings.apply(func, axis=1, result_type="expand")
 
     return drawings
 
@@ -123,8 +129,7 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
 def create_numbers_wagered(
     wagers: pd.DataFrame, numbers_wagered: Optional[pd.DataFrame] = None
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    For the creation of the secondary foreign key table 'number_wagered'.
+    """For the creation of the secondary foreign key table 'numbers_wagered'.
     Allows for once-over preprocessing of unique ticket lottery numbers.
     Equates to a roughly 80% size reduction of the wagers DataFrame.
 
@@ -173,7 +178,6 @@ def create_numbers_wagered(
     wagers["numbers_wagered_id"] = wagers["numbers_wagered"].map(
         lambda x: numbers_wagered_dict.get(get_bit_info(x)[1])
     )
-
     wagers.drop("numbers_wagered", axis=1, inplace=True)
 
     return wagers, numbers_wagered
@@ -197,7 +201,7 @@ def find_and_set_winnings(
     """
 
     def calculate_prize(
-        df: pd.Series, numbers_wagered: pd.DataFrame, drawings: pd.DataFrame
+        row: pd.Series, numbers_wagered: pd.DataFrame, drawings: pd.DataFrame
     ) -> pd.Series:
         """
         Function applied to all rows in the 'wagers' DataFrame.
@@ -216,12 +220,12 @@ def find_and_set_winnings(
                             and date.
         """
 
-        number_wagered_id = df["numbers_wagered_id"]
-        draw_number_id = df["draw_number_id"]
+        numbers_wagered_id = row["numbers_wagered_id"]
+        draw_number_id = row["draw_number_id"]
 
-        high_bits1 = numbers_wagered.loc[number_wagered_id, "high_bits"]
-        low_bits1 = numbers_wagered.loc[number_wagered_id, "low_bits"]
-        number_played = numbers_wagered.loc[number_wagered_id, "numbers_played"]
+        high_bits1 = numbers_wagered.loc[numbers_wagered_id, "high_bits"]
+        low_bits1 = numbers_wagered.loc[numbers_wagered_id, "low_bits"]
+        number_played = numbers_wagered.loc[numbers_wagered_id, "numbers_played"]
 
         try:
             high_bits2 = drawings.loc[draw_number_id, "high_bits"]
@@ -240,7 +244,6 @@ def find_and_set_winnings(
             try:
                 prize = PRIZE_DICT[number_played][numbers_matched]
                 match_mask += [numbers_matched, prize, date]
-
             except KeyError:
                 match_mask += [numbers_matched, 0, date]
 
@@ -261,9 +264,8 @@ def find_and_set_winnings(
                 )
             )
         )
-
-        df = df.append(d)
-        return df
+        row = row.append(d)
+        return row
 
     wagers = wagers.apply(
         lambda x: calculate_prize(x, numbers_wagered, drawings),
@@ -303,7 +305,7 @@ def process_keno_split_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
         sorted(map(lambda x: str(x), pathlib.Path(data_dir).glob(glob)))
     )
 
-    def read_or_process(file_path: str, func) -> pd.DataFrame:
+    def read_or_process(file_path: str, func: Callable) -> pd.DataFrame:
         if not os.path.exists(file_path):
             df = func()
             df.to_csv(file_path, index=False)
@@ -341,12 +343,11 @@ conn = sqlite3.connect("keno/data/keno_2017_2019/keno_v3.db")
 
 data_dir = "keno/data/keno_2017_2019/"
 
-
 wagers, drawings = process_keno_split_data(data_dir=data_dir)
 
 drawings = process_drawings(drawings)
 
-wagers, numbers_wagered = create_numbers_wagered(wagers)
+# wagers, numbers_wagered = create_numbers_wagered(wagers)
 
 # wagers = find_and_set_winnings(
 #     wagers=wagers, numbers_wagered=numbers_wagered, drawings=drawings
@@ -360,13 +361,13 @@ drawings.to_sql(
     if_exists="replace",
     index_label="id",
 )
-numbers_wagered.to_sql(
-    name="numbers_wagered",
-    con=conn,
-    schema=NUMBERS_WAGERED_SCHEMA,
-    if_exists="replace",
-    index_label="id",
-)
-wagers.to_sql(
-    name="wagers", con=conn, schema=WAGERS_SCHEMA, if_exists="replace", index_label="id"
-)
+# numbers_wagered.to_sql(
+#     name="numbers_wagered",
+#     con=conn,
+#     schema=NUMBERS_WAGERED_SCHEMA,
+#     if_exists="replace",
+#     index_label="id",
+# )
+# wagers.to_sql(
+#     name="wagers", con=conn, schema=WAGERS_SCHEMA, if_exists="replace", index_label="id"
+# )
