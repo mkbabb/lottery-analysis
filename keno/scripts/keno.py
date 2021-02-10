@@ -1,14 +1,19 @@
+import argparse
 import bisect
-import os
+import contextlib
+import json
 import pathlib
-import sqlite3
 from datetime import datetime, timedelta
 from typing import *
+from numpy import number
+from functools import reduce
 
 import pandas as pd
+import sqlalchemy as sqla
 
 from bit_manipulations import bits_to_nums, nums_to_bits, popcount64d
 from schemas import *
+from utils import create_sqla_engine_str
 
 MAX_BITS = 63
 MAX_NUMBERS = 80 + 1
@@ -36,7 +41,7 @@ class KenoTime:
         self.intervals = ((end_date + timedelta(days=1)) - start_date) // delta + 1
 
 
-def normalize_draw_dates(dates: pd.Series) -> Callable[[int], int]:
+def normalize_draw_dates(dates: pd.Series) -> Callable[[int], str]:
     KENO_TIMES = [
         KenoTime(
             datetime.fromisoformat("1970-01-01T05:05"),
@@ -57,7 +62,7 @@ def normalize_draw_dates(dates: pd.Series) -> Callable[[int], int]:
 
     prev_date: Optional[datetime] = None
 
-    def calc_dates(time: int) -> int:
+    def calc_dates(time: int) -> str:
         nonlocal prev_date
         date = datetime.strptime(str(time), "%Y%m%d")
 
@@ -68,7 +73,7 @@ def normalize_draw_dates(dates: pd.Series) -> Callable[[int], int]:
 
         if offset > 0:
             prev_date = None
-            return int(date.timestamp())
+            return date.isoformat()
         else:
             if prev_date is None or prev_date.time() == keno_time.end_date.time():
                 start_date = keno_time.start_date
@@ -76,9 +81,23 @@ def normalize_draw_dates(dates: pd.Series) -> Callable[[int], int]:
             else:
                 prev_date += keno_time.delta
 
-            return int(prev_date.timestamp())
+            return prev_date.isoformat()
 
     return calc_dates
+
+
+def get_bit_info(number_string: str) -> Tuple[int, int]:
+    bit_info = nums_to_bits(
+        number_string,
+        bit_length=MAX_BITS,
+        max_num=MAX_NUMBERS,
+        num_length=2,
+    )
+    return (bit_info[0], bit_info[1])
+
+
+def get_number_string(bit_info: List[int]) -> str:
+    return bits_to_nums(bit_info, delim=",", bit_length=MAX_BITS)
 
 
 def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
@@ -94,40 +113,55 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
     @returns drawings: modified 'drawings' DataFrame.
     """
 
-    drawings = drawings.rename(
-        columns={
-            "Draw Nbr": "id",
-            "Draw Date": "date",
-            "Winning Number String": "number_string",
-        }
-    ).set_index("id")
+    drawings = (
+        drawings.rename(
+            columns={
+                "Draw Nbr": "id",
+                "Draw Date": "date",
+                "Winning Number String": "number_string",
+            }
+        )
+        .set_index("id")
+        .assign(low_bits=0, high_bits=0)
+    )
 
     normalize_draw_dates_func = normalize_draw_dates(drawings["date"])
 
-    def func(row: pd.Series) -> pd.Series:
-        bit_info = nums_to_bits(
-            row["number_string"],
-            bit_length=MAX_BITS,
-            max_num=MAX_NUMBERS,
-            num_length=2,
-            delim=" ",
-        )
-        row["number_string"] = bits_to_nums(bit_info, delim=",", bit_length=MAX_BITS)
-        d = pd.Series(dict(zip(["low_bits", "high_bits"], bit_info)))
-        row = row.append(d)
+    def process(row: pd.Series) -> pd.Series:
+        low_bits, high_bits = get_bit_info(row["number_string"])
+
+        row["number_string"] = get_number_string([low_bits, high_bits])
+        row["low_bits"] = low_bits
+        row["high_bits"] = high_bits
 
         row["date"] = normalize_draw_dates_func(row["date"])
 
         return row
 
-    drawings = drawings.apply(func, axis=1, result_type="expand")
+    return drawings.apply(process, axis=1)
 
-    return drawings
+
+def process_wagers(wagers: pd.DataFrame) -> pd.DataFrame:
+    def process(row: pd.Series) -> pd.Series:
+        low_bits, high_bits = get_bit_info(row["numbers_wagered"])
+
+        row["low_bits"] = low_bits
+        row["high_bits"] = high_bits
+
+        row["qp"] = row["qp"] == "T"
+
+        return row
+
+    return (
+        wagers.assign(low_bits=0, high_bits=0)
+        .apply(process, 1)
+        .drop("numbers_wagered", axis=1)
+    )
 
 
 def create_numbers_wagered(
-    wagers: pd.DataFrame, numbers_wagered: Optional[pd.DataFrame] = None
-) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    wagers: pd.DataFrame, numbers_wagered: pd.DataFrame
+) -> pd.DataFrame:
     """For the creation of the secondary foreign key table 'numbers_wagered'.
     Allows for once-over preprocessing of unique ticket lottery numbers.
     Equates to a roughly 80% size reduction of the wagers DataFrame.
@@ -140,46 +174,50 @@ def create_numbers_wagered(
     @returns number_wagered: new 'number_wagered' DataFrame wherewith the
                     subsequent ticket lottery numbers are stored.
     """
+    pk = ["low_bits", "high_bits"]
 
-    def get_bit_info(nums: str) -> Tuple[list, str]:
-        bit_info = nums_to_bits(
-            nums, bit_length=MAX_BITS, max_num=MAX_NUMBERS, num_length=2
-        )
-
-        return bit_info, bits_to_nums(bit_info, delim=",", bit_length=MAX_BITS)
-
-    def to_bits(row: pd.Series) -> pd.Series:
-        bit_info, number_string = get_bit_info(row["number_string"])
-
-        row["number_string"] = number_string
-        bit_info.append(sum(map(popcount64d, bit_info)))
-
-        d = pd.Series(dict(zip(["low_bits", "high_bits", "numbers_played"], bit_info)))
-        row = row.append(d)
+    def get_number_strings(row: pd.Series) -> pd.Series:
+        bit_info = [row[i] for i in pk]
+        row["numbers_played"] = sum(map(popcount64d, bit_info))
+        row["number_string"] = get_number_string(bit_info)
 
         return row
 
-    if numbers_wagered is None:
-        numbers_wagered = (
-            wagers["numbers_wagered"]
-            .drop_duplicates()
-            .reset_index(drop=True)
-            .to_frame("number_string")
-        )
-        numbers_wagered = numbers_wagered.apply(to_bits, axis=1, result_type="expand")
-
-    numbers_wagered_dict = dict(
-        zip(
-            numbers_wagered["number_string"],
-            numbers_wagered.index,
-        )
+    # A number string is the normalized number list;
+    # numbers_wagered is what the user selected.
+    t_numbers_wagered = (
+        wagers[pk]
+        .drop_duplicates()
+        .reset_index(drop=True)
+        .assign(numbers_played=0, number_string="")
+        .apply(get_number_strings, axis=1)
     )
-    wagers["numbers_wagered_id"] = wagers["numbers_wagered"].map(
-        lambda x: numbers_wagered_dict.get(get_bit_info(x)[1])
-    )
-    wagers.drop("numbers_wagered", axis=1, inplace=True)
 
-    return wagers, numbers_wagered
+    if numbers_wagered.empty:
+        t_numbers_wagered["id"] = t_numbers_wagered.index
+        return t_numbers_wagered
+    else:
+        dups = reduce(
+            lambda x, y: x & y,
+            (t_numbers_wagered[i].isin(numbers_wagered[i]) for i in pk),
+        )
+        t_numbers_wagered = t_numbers_wagered[~dups].reset_index(drop=True)
+
+        if not t_numbers_wagered.empty:
+            max_id = numbers_wagered["id"].max()
+            t_numbers_wagered["id"] = t_numbers_wagered.index + max_id + 1
+            return pd.concat([numbers_wagered, t_numbers_wagered], axis=0)
+        else:
+            return numbers_wagered
+
+
+def map_wagers(wagers: pd.DataFrame, numbers_wagered: pd.DataFrame) -> pd.DataFrame:
+    pk = ["low_bits", "high_bits"]
+
+    mapped_index = wagers[pk].merge(numbers_wagered, on=pk)
+    wagers["numbers_wagered_id"] = mapped_index["id"]
+
+    return wagers.drop(pk, axis=1).reset_index(drop=True)
 
 
 def find_and_set_winnings(
@@ -238,7 +276,7 @@ def find_and_set_winnings(
                     zip([low_bits1, high_bits1], [low_bits2, high_bits2]),
                 )
             )
-            numbers_matched = sum(map(lambda x: popcount64d(x), match_mask))
+            numbers_matched = sum(map(popcount64d, match_mask))
 
             try:
                 prize = PRIZE_DICT[number_played][numbers_matched]
@@ -289,9 +327,9 @@ def concat_csv(
     return pd.concat(dfs)
 
 
-def process_keno_split_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def process_keno_split_data(dirpath: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     get_paths = lambda glob: list(
-        sorted(map(lambda x: str(x), pathlib.Path(data_dir).glob(glob)))
+        sorted(map(lambda x: str(x), pathlib.Path(dirpath).glob(glob)))
     )
 
     wagers_paths = get_paths("split/*wager*")
@@ -313,38 +351,85 @@ def process_keno_split_data(data_dir: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
     return wagers, drawings
 
 
-conn = sqlite3.connect("keno/data/keno_2017_2019/keno_v3.db")
-
-data_dir = "keno/data/keno_2017_2019/"
-
-wagers, drawings = process_keno_split_data(data_dir=data_dir)
-
-# drawings = process_drawings(drawings)
-
-wagers, numbers_wagered = create_numbers_wagered(wagers)
-
-# wagers = find_and_set_winnings(
-#     wagers=wagers, numbers_wagered=numbers_wagered, drawings=drawings
-# )
-
-wagers = pd.read_sql_table("wagers", con=conn)
-# drawings = pd.read_sql_table("drawings", con=conn)
+def apply_multi_index(
+    df: pd.DataFrame,
+    levels: Union[str, List[str]],
+    func: Callable[[pd.MultiIndex], pd.MultiIndex],
+) -> pd.MultiIndex:
+    return df.index.set_levels(func(df.index.get_level_values(levels)), levels)
 
 
-# drawings.to_sql(
-#     name="drawings",
-#     con=conn,
-#     schema=DRAWINGS_SCHEMA,
-#     if_exists="replace",
-#     index_label="id",
-# )
-numbers_wagered.to_sql(
-    name="numbers_wagered",
-    con=conn,
-    schema=NUMBERS_WAGERED_SCHEMA,
-    if_exists="replace",
-    index_label="id",
-)
-wagers.to_sql(
-    name="wagers", con=conn, schema=WAGERS_SCHEMA, if_exists="replace", index_label="id"
-)
+def insert_on_duplicate_key_update(
+    table: sqla.Table, values: dict, conn: sqla.engine.Connection
+) -> Any:
+    insert_stmt = table.insert().values(**values)
+    # Only supported in SQLA 1.4...
+    # on_conflict_stmt = insert_stmt.on_duplicate_key_update(
+    #     data=insert_stmt.inserted.data, status="U"
+    # )
+    try:
+        return conn.execute(insert_stmt)
+    except sqla.exc.IntegrityError:
+        pass
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", required=True)
+    parser.add_argument("--dirpath", required=True)
+
+    args = parser.parse_args()
+
+    CONFIG = json.load(open(args.config, "r"))
+    MYSQL = CONFIG["mysql"]
+
+    def open_mysql_conn() -> sqla.engine.Connection:
+        engine_str = create_sqla_engine_str(
+            username=MYSQL["username"],
+            password=MYSQL["password"],
+            host=MYSQL["host"],
+            port=MYSQL["port"],
+            database=MYSQL["database"],
+        )
+        engine = sqla.create_engine(engine_str)
+        return engine.connect()
+
+    with contextlib.closing(open_mysql_conn()) as conn:
+        metadata = sqla.MetaData(bind=conn)
+        get_table = lambda x: sqla.Table(x, metadata, autoload=True)
+
+        numbers_wagered_table = get_table("numbers_wagered")
+        wagers_table = get_table("wagers")
+        drawings_table = get_table("drawings")
+
+        wagers, drawings = process_keno_split_data(dirpath=args.dirpath)
+        numbers_wagered = pd.read_sql_table("numbers_wagered", con=conn)
+
+        wagers = wagers[:100]
+        drawings = drawings[:100]
+
+        wagers = process_wagers(wagers)
+        drawings = process_drawings(drawings)
+
+        numbers_wagered = create_numbers_wagered(wagers, numbers_wagered)
+
+        wagers = map_wagers(wagers, numbers_wagered)
+
+        for n, row in numbers_wagered.iterrows():
+            insert_on_duplicate_key_update(numbers_wagered_table, row, conn)
+        # numbers_wagered.apply(lambda row: print(row))
+
+        # numbers_wagered.to_sql(
+        #     "numbers_wagered", con=conn, if_exists="append", index=False
+        # )
+        # drawings.to_sql("drawings", con=conn, if_exists="append", index=False)
+
+        # wagers.to_sql("wagers", con=conn, if_exists="append", index=False)
+
+        # wagers = find_and_set_winnings(
+        #     wagers=wagers, numbers_wagered=numbers_wagered, drawings=drawings
+        # )
+
+
+if __name__ == "__main__":
+    main()

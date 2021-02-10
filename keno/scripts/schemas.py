@@ -33,7 +33,7 @@ CREATE TABLE "wagers" (
 NUMBERS_WAGERED_SCHEMA = """
 CREATE TABLE "numbers_wagered" (
 	"id"	INTEGER PRIMARY KEY AUTOINCREMENT,
-	"number_string"	TEXT,
+	"numbers_string"	TEXT,
 	"high_bits"	UNSIGNED SMALL INTEGER,
 	"low_bits"	UNSIGNED INTEGER,
 	"numbers_played"	TINY INTEGER

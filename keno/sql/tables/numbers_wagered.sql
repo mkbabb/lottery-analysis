@@ -1,8 +1,8 @@
 CREATE TABLE `numbers_wagered` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `numbers_string` TEXT,
-    `high_bits` INT UNSIGNED,
-    `low_bits` INT UNSIGNED,
+    `number_string` TEXT,
+    `high_bits` BIGINT UNSIGNED,
+    `low_bits` BIGINT UNSIGNED,
     `numbers_played` INT UNSIGNED,
     PRIMARY KEY(`id`)
 );

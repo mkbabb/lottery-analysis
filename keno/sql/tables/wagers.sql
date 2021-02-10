@@ -1,6 +1,5 @@
 CREATE TABLE `wagers` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
-    `date` DATETIME,
     `draw_number_id` INT UNSIGNED,
     `begin_draw` INT,
     `end_draw` INT,
@@ -8,8 +7,8 @@ CREATE TABLE `wagers` (
     `ticket_cost` INT,
     `numbers_wagered_id` INT UNSIGNED,
     `numbers_matched` INT,
-    `high_match_mask` INT UNSIGNED,
-    `low_match_mask` INT UNSIGNED,
+    `high_match_mask` BIGINT UNSIGNED,
+    `low_match_mask` BIGINT UNSIGNED,
     `prize` INT,
     PRIMARY KEY(`id`),
     FOREIGN KEY(`draw_number_id`) REFERENCES `drawings`(`id`),
