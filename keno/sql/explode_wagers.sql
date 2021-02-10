@@ -1,13 +1,7 @@
-WITH t_wagers AS (
-    SELECT
-        *
-    FROM
-        wagers
-        INNER JOIN numbers_wagered ON wagers.numbers_wagered_id = numbers_wagered.id
-)
 SELECT
-    *
+    wagers. *,
+    drawings.id AS tmp_draw_number_id
 FROM
-    t_wagers
-    LEFT JOIN drawings ON drawings.id BETWEEN t_wagers.begin_draw
-    AND t_wagers.end_draw
+    wagers
+    LEFT JOIN drawings ON drawings.id BETWEEN wagers.begin_draw
+    AND wagers.end_draw;
