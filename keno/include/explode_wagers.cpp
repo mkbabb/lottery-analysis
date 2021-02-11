@@ -6,8 +6,6 @@
 
 #include "fmt/format.h"
 
-using namespace std::literals::string_literals;
-
 struct wager_row
 {
     int wager_id, begin_draw, end_draw;
@@ -69,7 +67,8 @@ main()
     int ticket_cost, numbers_wagered_id;
 
     out_file
-      << R"("wager_id","begin_draw","end_draw","qp","ticket_cost","numbers_wagered_id","draw_number_id"\n)";
+      << R"("wager_id","begin_draw","end_draw","qp","ticket_cost","numbers_wagered_id","draw_number_id")"
+      << "\n";
 
     in_file.next_line();
     while (in_file.read_row(
