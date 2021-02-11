@@ -10,11 +10,9 @@ using namespace std::literals::string_literals;
 
 struct wager_row
 {
-    int id;
-    int begin_draw, end_draw;
-    bool qp;
-    int ticket_cost;
-    std::string numbers_wagered;
+    int wager_id, begin_draw, end_draw;
+    int qp;
+    int ticket_cost, numbers_wagered_id, draw_number_id;
 };
 
 constexpr auto explode_row = [](wager_row& row) {
@@ -30,8 +28,7 @@ constexpr auto explode_row = [](wager_row& row) {
         auto t_row = row;
         auto draw_number = begin_draw + i;
 
-        t_row.begin_draw = draw_number;
-        t_row.end_draw = draw_number;
+        t_row.draw_number_id = draw_number;
 
         rows.push_back(t_row);
     }
@@ -40,13 +37,14 @@ constexpr auto explode_row = [](wager_row& row) {
 };
 
 constexpr auto write_row = [](auto& file, wager_row& row) {
-    auto s = fmt::format("{},{},{},{},{},{}\n",
-                         row.id,
+    auto s = fmt::format("{},{},{},{},{},{},{}\n",
+                         row.wager_id,
                          row.begin_draw,
                          row.end_draw,
                          row.qp,
                          row.ticket_cost,
-                         row.numbers_wagered);
+                         row.numbers_wagered_id,
+                         row.draw_number_id);
     file << s;
 };
 
@@ -55,39 +53,38 @@ main()
 {
     using namespace std::filesystem;
 
-    auto dir_path = path("keno/data/keno_2017_2019/");
-    auto wagers_path = path("keno_wager_data.csv");
+    auto dir_path = path("keno/data/");
+    auto wagers_path = path("wagers.csv");
 
     auto in_filepath = dir_path / wagers_path;
-    auto out_filepath = dir_path / path("tmp.csv");
+    auto out_filepath = dir_path / path("exploded_wagers.csv");
 
-    io::CSVReader<5, io::trim_chars<' ', '\t'>, io::no_quote_escape<';'>> in_file(
+    io::CSVReader<6, io::trim_chars<' ', '\t'>, io::no_quote_escape<','>> in_file(
       in_filepath.string());
 
     std::ofstream out_file(out_filepath.string());
 
-    int begin_draw, end_draw;
-    std::string qp;
-    int ticket_cost;
-    std::string numbers_wagered;
+    int wager_id, begin_draw, end_draw;
+    int qp;
+    int ticket_cost, numbers_wagered_id;
 
-    int n = 0;
+    out_file
+      << R"("wager_id","begin_draw","end_draw","qp","ticket_cost","numbers_wagered_id","draw_number_id"\n)";
 
     in_file.next_line();
-    while (in_file.read_row(begin_draw, end_draw, qp, ticket_cost, numbers_wagered)) {
-        wager_row base_row{ .id = n,
+    while (in_file.read_row(
+      wager_id, begin_draw, end_draw, qp, ticket_cost, numbers_wagered_id)) {
+        wager_row base_row{ .wager_id = wager_id,
                             .begin_draw = begin_draw,
                             .end_draw = end_draw,
-                            .qp = qp == "T" ? true : false,
+                            .qp = qp,
                             .ticket_cost = ticket_cost,
-                            .numbers_wagered = numbers_wagered };
+                            .numbers_wagered_id = numbers_wagered_id };
 
         auto rows = explode_row(base_row);
 
         for (auto& row : rows) {
             write_row(out_file, row);
         }
-
-        n += 1;
     }
 }
