@@ -160,7 +160,7 @@ def process_wagers(wagers: pd.DataFrame) -> pd.DataFrame:
 
 
 def create_numbers_wagered(
-    wagers: pd.DataFrame, numbers_wagered: pd.DataFrame
+    wagers: pd.DataFrame, conn: sqla.engine.Connection
 ) -> pd.DataFrame:
     """For the creation of the secondary foreign key table 'numbers_wagered'.
     Allows for once-over preprocessing of unique ticket lottery numbers.
@@ -174,6 +174,7 @@ def create_numbers_wagered(
     @returns number_wagered: new 'number_wagered' DataFrame wherewith the
                     subsequent ticket lottery numbers are stored.
     """
+    table_name = "numbers_wagered"
     pk = ["low_bits", "high_bits"]
 
     def get_number_strings(row: pd.Series) -> pd.Series:
@@ -193,31 +194,47 @@ def create_numbers_wagered(
         .apply(get_number_strings, axis=1)
     )
 
-    if numbers_wagered.empty:
-        t_numbers_wagered["id"] = t_numbers_wagered.index
-        return t_numbers_wagered
-    else:
-        dups = reduce(
-            lambda x, y: x & y,
-            (t_numbers_wagered[i].isin(numbers_wagered[i]) for i in pk),
-        )
-        t_numbers_wagered = t_numbers_wagered[~dups].reset_index(drop=True)
+    numbers_wagered = pd.read_sql_table(table_name, con=conn, index_col="id")
 
-        if not t_numbers_wagered.empty:
-            max_id = numbers_wagered["id"].max()
-            t_numbers_wagered["id"] = t_numbers_wagered.index + max_id + 1
-            return pd.concat([numbers_wagered, t_numbers_wagered], axis=0)
-        else:
-            return numbers_wagered
+    if not numbers_wagered.empty:
+        dups = t_numbers_wagered.set_index(pk).index.isin(
+            numbers_wagered.set_index(pk).index
+        )
+        t_numbers_wagered = t_numbers_wagered.loc[~dups]
+
+    t_numbers_wagered.to_sql(table_name, con=conn, if_exists="append", index=False)
+
+    return pd.read_sql_table(table_name, con=conn, index_col="id")
 
 
 def map_wagers(wagers: pd.DataFrame, numbers_wagered: pd.DataFrame) -> pd.DataFrame:
     pk = ["low_bits", "high_bits"]
 
-    mapped_index = wagers[pk].merge(numbers_wagered, on=pk)
+    mapped_index = wagers[pk].merge(numbers_wagered.reset_index(), on=pk, how="left")
     wagers["numbers_wagered_id"] = mapped_index["id"]
 
-    return wagers.drop(pk, axis=1).reset_index(drop=True)
+    wagers = wagers.drop(pk, axis=1).reset_index(drop=True)
+
+    return wagers
+
+
+def explode_wagers(wagers: pd.DataFrame, conn: sqla.engine.Connection) -> pd.DataFrame:
+    tmp_table_name = "tmp_wagers"
+    wagers.to_sql(tmp_table_name, con=conn, index_label="wager_id", if_exists="replace")
+
+    sql = f"""SELECT
+    {tmp_table_name}. *,
+    drawings.id AS tmp_draw_number_id
+FROM
+    {tmp_table_name}
+    LEFT JOIN drawings ON drawings.id BETWEEN {tmp_table_name}.begin_draw
+    AND {tmp_table_name}.end_draw;"""
+
+    tmp_table = pd.read_sql(sql, con=conn)
+    tmp_table["draw_number_id"] = tmp_table["tmp_draw_number_id"]
+    tmp_table.drop("tmp_draw_number_id", axis=1, inplace=True)
+
+    return tmp_table
 
 
 def find_and_set_winnings(
@@ -237,9 +254,7 @@ def find_and_set_winnings(
 
     """
 
-    def calculate_prize(
-        row: pd.Series, numbers_wagered: pd.DataFrame, drawings: pd.DataFrame
-    ) -> pd.Series:
+    def calculate_prize(row: pd.Series) -> pd.Series:
         """
         Function applied to all rows in the 'wagers' DataFrame.
         Utilized normally via pd.apply.
@@ -256,61 +271,30 @@ def find_and_set_winnings(
                             hamming weight (number of spots played),
                             and date.
         """
-
         numbers_wagered_id = row["numbers_wagered_id"]
         draw_number_id = row["draw_number_id"]
 
-        high_bits1 = numbers_wagered.loc[numbers_wagered_id, "high_bits"]
-        low_bits1 = numbers_wagered.loc[numbers_wagered_id, "low_bits"]
-        number_played = numbers_wagered.loc[numbers_wagered_id, "numbers_played"]
+        high_bits1 = numbers_wagered.at[numbers_wagered_id, "high_bits"]
+        low_bits1 = numbers_wagered.at[numbers_wagered_id, "low_bits"]
+        number_played = numbers_wagered.at[numbers_wagered_id, "numbers_played"]
 
-        try:
-            high_bits2 = drawings.loc[draw_number_id, "high_bits"]
-            low_bits2 = drawings.loc[draw_number_id, "low_bits"]
+        high_bits2 = drawings.at[draw_number_id, "high_bits"]
+        low_bits2 = drawings.at[draw_number_id, "low_bits"]
 
-            date = drawings.loc[draw_number_id, "date"]
+        match_mask = [low_bits1 & low_bits2, high_bits1 & high_bits2]
+        numbers_matched = sum(map(popcount64d, match_mask))
 
-            match_mask = list(
-                map(
-                    lambda x: x[0] & x[1],
-                    zip([low_bits1, high_bits1], [low_bits2, high_bits2]),
-                )
-            )
-            numbers_matched = sum(map(popcount64d, match_mask))
+        row["low_match_mask"] = match_mask[0]
+        row["high_match_mask"] = match_mask[1]
 
-            try:
-                prize = PRIZE_DICT[number_played][numbers_matched]
-                match_mask += [numbers_matched, prize, date]
-            except KeyError:
-                match_mask += [numbers_matched, 0, date]
+        row["numbers_matched"] = numbers_matched
+        row["prize"] = PRIZE_DICT.get(number_played, {}).get(numbers_matched, 0)
 
-        except KeyError:
-            match_mask = [0, 0, 0, 0, 0]
-
-        d = pd.Series(
-            dict(
-                zip(
-                    [
-                        "high_match_mask",
-                        "low_match_mask",
-                        "numbers_matched",
-                        "prize",
-                        "date",
-                    ],
-                    match_mask,
-                )
-            )
-        )
-        row = row.append(d)
         return row
 
-    wagers = wagers.apply(
-        lambda x: calculate_prize(x, numbers_wagered, drawings),
-        axis=1,
-        result_type="expand",
-    )
-
-    return wagers
+    return wagers.assign(
+        low_match_mask=0, high_match_mask=0, numbers_matched=0, prize=0
+    ).apply(calculate_prize, axis=1)
 
 
 def concat_csv(
@@ -359,20 +343,6 @@ def apply_multi_index(
     return df.index.set_levels(func(df.index.get_level_values(levels)), levels)
 
 
-def insert_on_duplicate_key_update(
-    table: sqla.Table, values: dict, conn: sqla.engine.Connection
-) -> Any:
-    insert_stmt = table.insert().values(**values)
-    # Only supported in SQLA 1.4...
-    # on_conflict_stmt = insert_stmt.on_duplicate_key_update(
-    #     data=insert_stmt.inserted.data, status="U"
-    # )
-    try:
-        return conn.execute(insert_stmt)
-    except sqla.exc.IntegrityError:
-        pass
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True)
@@ -395,40 +365,24 @@ def main():
         return engine.connect()
 
     with contextlib.closing(open_mysql_conn()) as conn:
-        metadata = sqla.MetaData(bind=conn)
-        get_table = lambda x: sqla.Table(x, metadata, autoload=True)
-
-        numbers_wagered_table = get_table("numbers_wagered")
-        wagers_table = get_table("wagers")
-        drawings_table = get_table("drawings")
-
         wagers, drawings = process_keno_split_data(dirpath=args.dirpath)
         numbers_wagered = pd.read_sql_table("numbers_wagered", con=conn)
 
-        wagers = wagers[:100]
-        drawings = drawings[:100]
+        # count = 3000
+        # wagers = wagers[:count]
+        # drawings = drawings[:count]
+
+        drawings = process_drawings(drawings)
+        drawings.to_sql("drawings", con=conn, if_exists="append", index=False)
+        drawings = pd.read_sql_table("drawings", con=conn, index_col="id")
 
         wagers = process_wagers(wagers)
-        drawings = process_drawings(drawings)
-
-        numbers_wagered = create_numbers_wagered(wagers, numbers_wagered)
+        numbers_wagered = create_numbers_wagered(wagers, conn)
 
         wagers = map_wagers(wagers, numbers_wagered)
-
-        for n, row in numbers_wagered.iterrows():
-            insert_on_duplicate_key_update(numbers_wagered_table, row, conn)
-        # numbers_wagered.apply(lambda row: print(row))
-
-        # numbers_wagered.to_sql(
-        #     "numbers_wagered", con=conn, if_exists="append", index=False
-        # )
-        # drawings.to_sql("drawings", con=conn, if_exists="append", index=False)
-
-        # wagers.to_sql("wagers", con=conn, if_exists="append", index=False)
-
-        # wagers = find_and_set_winnings(
-        #     wagers=wagers, numbers_wagered=numbers_wagered, drawings=drawings
-        # )
+        wagers = explode_wagers(wagers, conn)
+        wagers = find_and_set_winnings(wagers, numbers_wagered, drawings)
+        wagers.to_sql("wagers", con=conn, if_exists="append", index=False)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 CREATE TABLE `wagers` (
     `id` INT UNSIGNED NOT NULL AUTO_INCREMENT,
+    `wager_id` INT UNSIGNED,
     `draw_number_id` INT UNSIGNED,
     `begin_draw` INT,
     `end_draw` INT,
