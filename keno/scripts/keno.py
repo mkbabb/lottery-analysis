@@ -2,11 +2,9 @@ import argparse
 import bisect
 import contextlib
 import json
-import pathlib
+import os
 from datetime import datetime, timedelta
 from typing import *
-from numpy import number
-from functools import reduce
 
 import pandas as pd
 import sqlalchemy as sqla
@@ -37,7 +35,7 @@ class KenoTime:
         self.start_date = start_date
         self.end_date = end_date
         self.delta = delta
-        # Shift by one day, and add (inclusive range).
+        # Shift by one day and add (inclusive range).
         self.intervals = ((end_date + timedelta(days=1)) - start_date) // delta + 1
 
 
@@ -202,7 +200,9 @@ def create_numbers_wagered(
         )
         t_numbers_wagered = t_numbers_wagered.loc[~dups]
 
-    t_numbers_wagered.to_sql(table_name, con=conn, if_exists="append", index=False)
+    t_numbers_wagered.to_sql(
+        table_name, con=conn, if_exists="append", index=False, method="multi"
+    )
 
     return pd.read_sql_table(table_name, con=conn, index_col="id")
 
@@ -220,7 +220,7 @@ def map_wagers(wagers: pd.DataFrame, numbers_wagered: pd.DataFrame) -> pd.DataFr
 
 def explode_wagers(wagers: pd.DataFrame, conn: sqla.engine.Connection) -> pd.DataFrame:
     tmp_table_name = "tmp_wagers"
-    wagers.to_sql(tmp_table_name, con=conn, index_label="wager_id", if_exists="replace")
+    # wagers.to_sql(tmp_table_name, con=conn, index_label="wager_id", if_exists="replace", method="multi")
 
     sql = f"""SELECT
     {tmp_table_name}. *,
@@ -228,7 +228,7 @@ def explode_wagers(wagers: pd.DataFrame, conn: sqla.engine.Connection) -> pd.Dat
 FROM
     {tmp_table_name}
     LEFT JOIN drawings ON drawings.id BETWEEN {tmp_table_name}.begin_draw
-    AND {tmp_table_name}.end_draw;"""
+    AND {tmp_table_name}.end_draw"""
 
     tmp_table = pd.read_sql(sql, con=conn)
     tmp_table["draw_number_id"] = tmp_table["tmp_draw_number_id"]
@@ -238,7 +238,11 @@ FROM
 
 
 def find_and_set_winnings(
-    wagers: pd.DataFrame, numbers_wagered: pd.DataFrame, drawings: pd.DataFrame
+    wagers: pd.DataFrame,
+    numbers_wagered: pd.DataFrame,
+    drawings: pd.DataFrame,
+    output_table_name: str,
+    conn: sqla.engine.Connection,
 ) -> pd.DataFrame:
     """
     Function to find the prize amount of each item in the
@@ -253,6 +257,9 @@ def find_and_set_winnings(
     @returns wagers: modified 'wagers' DataFrame.
 
     """
+    print(f"LENGTH: {len(wagers)}")
+    # metadata = sqla.MetaData(bind=conn)
+    # output_table = sqla.Table(output_table_name, metadata, autoload=True)
 
     def calculate_prize(row: pd.Series) -> pd.Series:
         """
@@ -271,76 +278,35 @@ def find_and_set_winnings(
                             hamming weight (number of spots played),
                             and date.
         """
-        numbers_wagered_id = row["numbers_wagered_id"]
-        draw_number_id = row["draw_number_id"]
+        try:
+            numbers_wagered_id = row["numbers_wagered_id"]
+            draw_number_id = row["draw_number_id"]
 
-        high_bits1 = numbers_wagered.at[numbers_wagered_id, "high_bits"]
-        low_bits1 = numbers_wagered.at[numbers_wagered_id, "low_bits"]
-        number_played = numbers_wagered.at[numbers_wagered_id, "numbers_played"]
+            high_bits1 = numbers_wagered.at[numbers_wagered_id, "high_bits"]
+            low_bits1 = numbers_wagered.at[numbers_wagered_id, "low_bits"]
+            number_played = numbers_wagered.at[numbers_wagered_id, "numbers_played"]
 
-        high_bits2 = drawings.at[draw_number_id, "high_bits"]
-        low_bits2 = drawings.at[draw_number_id, "low_bits"]
+            high_bits2 = drawings.at[draw_number_id, "high_bits"]
+            low_bits2 = drawings.at[draw_number_id, "low_bits"]
 
-        match_mask = [low_bits1 & low_bits2, high_bits1 & high_bits2]
-        numbers_matched = sum(map(popcount64d, match_mask))
+            match_mask = [low_bits1 & low_bits2, high_bits1 & high_bits2]
+            numbers_matched = sum(map(popcount64d, match_mask))
 
-        row["low_match_mask"] = match_mask[0]
-        row["high_match_mask"] = match_mask[1]
+            row["low_match_mask"] = match_mask[0]
+            row["high_match_mask"] = match_mask[1]
 
-        row["numbers_matched"] = numbers_matched
-        row["prize"] = PRIZE_DICT.get(number_played, {}).get(numbers_matched, 0)
+            row["numbers_matched"] = numbers_matched
+            row["prize"] = PRIZE_DICT.get(number_played, {}).get(numbers_matched, 0)
+
+            # conn.execute(output_table.insert(), **row)
+        except Exception as e:
+            print(e)
 
         return row
 
     return wagers.assign(
         low_match_mask=0, high_match_mask=0, numbers_matched=0, prize=0
     ).apply(calculate_prize, axis=1)
-
-
-def concat_csv(
-    filepaths: List[str],
-    sep: str,
-    names: Optional[List[str]] = None,
-) -> pd.DataFrame:
-    has_header = None if names is not None else True
-
-    dfs = (
-        pd.read_csv(filepath, sep=sep, names=names, header=has_header)
-        for filepath in filepaths
-    )
-    return pd.concat(dfs)
-
-
-def process_keno_split_data(dirpath: str) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    get_paths = lambda glob: list(
-        sorted(map(lambda x: str(x), pathlib.Path(dirpath).glob(glob)))
-    )
-
-    wagers_paths = get_paths("split/*wager*")
-    wagers_names = "begin_draw;end_draw;qp;ticket_cost;numbers_wagered".split(";")
-    wagers = concat_csv(
-        wagers_paths,
-        sep=";",
-        names=wagers_names,
-    )
-
-    drawings_paths = get_paths("split/*draw*")
-    drawings_names = "Draw Nbr;Draw Date;Winning Number String".split(";")
-    drawings = concat_csv(
-        drawings_paths,
-        sep=";",
-        names=drawings_names,
-    )
-
-    return wagers, drawings
-
-
-def apply_multi_index(
-    df: pd.DataFrame,
-    levels: Union[str, List[str]],
-    func: Callable[[pd.MultiIndex], pd.MultiIndex],
-) -> pd.MultiIndex:
-    return df.index.set_levels(func(df.index.get_level_values(levels)), levels)
 
 
 def main():
@@ -365,24 +331,27 @@ def main():
         return engine.connect()
 
     with contextlib.closing(open_mysql_conn()) as conn:
-        wagers, drawings = process_keno_split_data(dirpath=args.dirpath)
         numbers_wagered = pd.read_sql_table("numbers_wagered", con=conn)
 
-        # count = 3000
-        # wagers = wagers[:count]
-        # drawings = drawings[:count]
-
-        drawings = process_drawings(drawings)
-        drawings.to_sql("drawings", con=conn, if_exists="append", index=False)
+        # drawings = process_drawings(drawings)
+        # drawings.to_sql("drawings", con=conn, if_exists="append", index=False, method="multi")
         drawings = pd.read_sql_table("drawings", con=conn, index_col="id")
 
-        wagers = process_wagers(wagers)
-        numbers_wagered = create_numbers_wagered(wagers, conn)
+        # wagers = process_wagers(wagers)
+        # numbers_wagered = create_numbers_wagered(wagers, conn)
 
-        wagers = map_wagers(wagers, numbers_wagered)
-        wagers = explode_wagers(wagers, conn)
-        wagers = find_and_set_winnings(wagers, numbers_wagered, drawings)
-        wagers.to_sql("wagers", con=conn, if_exists="append", index=False)
+        # wagers = map_wagers(wagers, numbers_wagered)
+        # wagers.to_csv(os.path.join(args.dirpath, "wagers.csv"), index=False)
+        # del wagers
+        # input("Explode the wagers.")
+
+        wagers = pd.read_csv(os.path.join(args.dirpath, "exploded_wagers.csv"))
+        wagers = find_and_set_winnings(
+            wagers, numbers_wagered, drawings, "wagers", conn
+        )
+        wagers.to_sql(
+            "wagers", con=conn, if_exists="append", index=False, method="multi"
+        )
 
 
 if __name__ == "__main__":

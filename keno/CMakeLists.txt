@@ -12,7 +12,7 @@ conan_basic_setup()
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-add_executable(${PROJECT_NAME} include/explode_wagers.cpp)
+add_executable(${PROJECT_NAME} include/bit_manipulations.cpp)
 target_link_libraries(${PROJECT_NAME} ${CONAN_LIBS})
 
 
