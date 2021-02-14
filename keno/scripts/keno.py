@@ -8,10 +8,11 @@ from typing import *
 
 import pandas as pd
 import sqlalchemy as sqla
+from sqlalchemy import func
 
 from bit_manipulations import bits_to_nums, nums_to_bits, popcount64d
 from schemas import *
-from utils import create_sqla_engine_str
+from utils import create_sqla_engine_str, read_sql_table_tmpfile
 
 MAX_BITS = 63
 MAX_NUMBERS = 80 + 1
@@ -110,7 +111,6 @@ def process_drawings(drawings: pd.DataFrame) -> pd.DataFrame:
 
     @returns drawings: modified 'drawings' DataFrame.
     """
-
     drawings = (
         drawings.rename(
             columns={
@@ -220,8 +220,13 @@ def map_wagers(wagers: pd.DataFrame, numbers_wagered: pd.DataFrame) -> pd.DataFr
 
 def explode_wagers(wagers: pd.DataFrame, conn: sqla.engine.Connection) -> pd.DataFrame:
     tmp_table_name = "tmp_wagers"
-    # wagers.to_sql(tmp_table_name, con=conn, index_label="wager_id", if_exists="replace", method="multi")
-
+    wagers.to_sql(
+        tmp_table_name,
+        con=conn,
+        index_label="wager_id",
+        if_exists="replace",
+        method="multi",
+    )
     sql = f"""SELECT
     {tmp_table_name}. *,
     drawings.id AS tmp_draw_number_id
@@ -237,18 +242,33 @@ FROM
     return tmp_table
 
 
+def trim_to_max_pk(
+    table_name: str,
+    pk: str,
+    conn: sqla.engine.Connection,
+) -> int:
+    metadata = sqla.MetaData(bind=conn)
+    table = sqla.Table(table_name, metadata, autoload=True)
+
+    start_id = conn.execute(func.max(table.c[pk])).scalar()
+
+    if start_id is not None:
+        conn.execute(table.delete().where(table.c[pk] == start_id))
+        return start_id
+    else:
+        return -1
+
+
 def find_and_set_winnings(
     wagers: pd.DataFrame,
     numbers_wagered: pd.DataFrame,
     drawings: pd.DataFrame,
-    output_table_name: str,
+    wagers_table_name: str,
     conn: sqla.engine.Connection,
 ) -> pd.DataFrame:
     """
     Function to find the prize amount of each item in the
     'wagers' DataFrame.
-
-    Most of the work is done within 'calculate_prize' function.
 
     @param wagers: DataFrame containing keno wagers data.
     @param numbers_wagered: DataFrame containing numbers_wagered data.
@@ -257,9 +277,8 @@ def find_and_set_winnings(
     @returns wagers: modified 'wagers' DataFrame.
 
     """
-    print(f"LENGTH: {len(wagers)}")
-    # metadata = sqla.MetaData(bind=conn)
-    # output_table = sqla.Table(output_table_name, metadata, autoload=True)
+    metadata = sqla.MetaData(bind=conn)
+    wagers_table = sqla.Table(wagers_table_name, metadata, autoload=True)
 
     def calculate_prize(row: pd.Series) -> pd.Series:
         """
@@ -298,7 +317,8 @@ def find_and_set_winnings(
             row["numbers_matched"] = numbers_matched
             row["prize"] = PRIZE_DICT.get(number_played, {}).get(numbers_matched, 0)
 
-            # conn.execute(output_table.insert(), **row)
+            conn.execute(wagers_table.insert(), **row)
+
         except Exception as e:
             print(e)
 
@@ -309,8 +329,17 @@ def find_and_set_winnings(
     ).apply(calculate_prize, axis=1)
 
 
+def trim_imported_wagers(
+    wagers: pd.DataFrame, wagers_table_name: str, conn: sqla.engine.Connection
+) -> pd.DataFrame:
+    pk = "wager_id"
+    start_id = trim_to_max_pk(wagers_table_name, pk=pk, conn=conn)
+    return wagers[wagers[pk] >= start_id]
+
+
 def main():
     parser = argparse.ArgumentParser()
+
     parser.add_argument("--config", required=True)
     parser.add_argument("--dirpath", required=True)
 
@@ -330,12 +359,18 @@ def main():
         engine = sqla.create_engine(engine_str)
         return engine.connect()
 
+    wagers_table_name = "wagers"
+    numbers_wagered_table_name = "numbers_wagered"
+    drawings_table_name = "drawings"
+
     with contextlib.closing(open_mysql_conn()) as conn:
-        numbers_wagered = pd.read_sql_table("numbers_wagered", con=conn)
+        # numbers_wagered = pd.read_sql_table(numbers_wagered_table_name, con=conn)
+
+        numbers_wagered = read_sql_table_tmpfile(numbers_wagered_table_name, con=conn)
 
         # drawings = process_drawings(drawings)
         # drawings.to_sql("drawings", con=conn, if_exists="append", index=False, method="multi")
-        drawings = pd.read_sql_table("drawings", con=conn, index_col="id")
+        drawings = read_sql_table_tmpfile(drawings_table_name, con=conn, index_col="id")
 
         # wagers = process_wagers(wagers)
         # numbers_wagered = create_numbers_wagered(wagers, conn)
@@ -346,12 +381,14 @@ def main():
         # input("Explode the wagers.")
 
         wagers = pd.read_csv(os.path.join(args.dirpath, "exploded_wagers.csv"))
+        wagers = trim_imported_wagers(wagers, wagers_table_name, conn)
+
         wagers = find_and_set_winnings(
-            wagers, numbers_wagered, drawings, "wagers", conn
+            wagers, numbers_wagered, drawings, wagers_table_name, conn
         )
-        wagers.to_sql(
-            "wagers", con=conn, if_exists="append", index=False, method="multi"
-        )
+        # wagers.to_sql(
+        #     "wagers", con=conn, if_exists="append", index=False, method="multi"
+        # )
 
 
 if __name__ == "__main__":
